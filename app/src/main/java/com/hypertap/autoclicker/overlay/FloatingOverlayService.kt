@@ -217,16 +217,29 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             // 2. Reposiciona e mantém a barra de ferramentas flutuante dentro dos limites da tela
             toolbarView?.let { toolbar ->
                 val params = toolbar.layoutParams as WindowManager.LayoutParams
-                val toolbarW = toolbar.width.coerceAtLeast(1)
-                val toolbarH = toolbar.height.coerceAtLeast(1)
+                val isLandscape = newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE
+                val density = resources.displayMetrics.density
+                val isExpanded = isToolbarExpanded.value
+
+                val targetW = if (isLandscape) {
+                    if (isExpanded) (500 * density).toInt() else (90 * density).toInt()
+                } else {
+                    (54 * density).toInt()
+                }
+
+                val targetH = if (isLandscape) {
+                    (52 * density).toInt()
+                } else {
+                    if (isExpanded) (520 * density).toInt() else (110 * density).toInt()
+                }
 
                 val ratioX = (params.x.toFloat() / oldWidth.toFloat()).coerceIn(0f, 1f)
                 val ratioY = (params.y.toFloat() / oldHeight.toFloat()).coerceIn(0f, 1f)
 
-                params.x = (ratioX * newWidth).toInt().coerceIn(0, (newWidth - toolbarW).coerceAtLeast(0))
-                params.y = (ratioY * newHeight).toInt().coerceIn(0, (newHeight - toolbarH).coerceAtLeast(0))
+                params.x = (ratioX * newWidth).toInt().coerceIn(0, (newWidth - targetW).coerceAtLeast(0))
+                params.y = (ratioY * newHeight).toInt().coerceIn(0, (newHeight - targetH).coerceAtLeast(0))
                 windowManager.updateViewLayout(toolbar, params)
-                adjustToolbarPositionWithinScreen()
+                adjustToolbarPositionWithinScreen(isExpanded)
             }
 
             // 3. Atualiza o canvas de sobreposição
@@ -903,8 +916,7 @@ fun FloatingToolbarComposable(
         if (isLandscape) {
             Row(
                 modifier = Modifier
-                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                    .horizontalScroll(rememberScrollState()),
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
@@ -1049,8 +1061,7 @@ fun FloatingToolbarComposable(
         } else {
             Column(
                 modifier = Modifier
-                    .padding(horizontal = 4.dp, vertical = 6.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
