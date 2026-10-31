@@ -151,6 +151,16 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             }
         }
 
+        // Garante que durante a execução os alvos fiquem com FLAG_NOT_TOUCHABLE para que
+        // os cliques despachados pelo AccessibilityService atravessem os marcadores
+        // e atinjam diretamente os botões/jogos por baixo.
+        serviceScope.launch {
+            executionEngine.executionState.collect { state ->
+                val isRunning = (state == ExecutionState.RUNNING)
+                updateTargetsTouchPassThrough(isRunning)
+            }
+        }
+
         startForeground(NOTIFICATION_ID, createNotification())
         initPathCanvasOverlay()
         initFloatingToolbar()
@@ -430,8 +440,24 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         }
     }
 
+    private fun updateTargetsTouchPassThrough(isExecuting: Boolean) {
+        activeTargetViews.values.forEach { view ->
+            val params = view.layoutParams as? WindowManager.LayoutParams ?: return@forEach
+            val newFlags = if (isExecuting) {
+                params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            } else {
+                params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            if (params.flags != newFlags) {
+                params.flags = newFlags
+                windowManager.updateViewLayout(view, params)
+            }
+        }
+    }
+
     private fun renderTargetView(target: InteractiveTarget) {
         val sizePx = (currentMarkerSize.value.sizeDp * resources.displayMetrics.density).toInt()
+        val isRunning = (executionEngine.executionState.value == ExecutionState.RUNNING)
 
         val params = WindowManager.LayoutParams(
             sizePx,
@@ -442,7 +468,8 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    (if (isRunning) WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else 0),
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START

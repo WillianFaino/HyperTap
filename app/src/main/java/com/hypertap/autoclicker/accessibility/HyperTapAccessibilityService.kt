@@ -58,19 +58,27 @@ class HyperTapAccessibilityService : AccessibilityService() {
         return suspendCancellableCoroutine { continuation ->
             val path = Path().apply {
                 moveTo(x, y)
+                lineTo(x, y) // Necessário no Android para registrar o segmento de contato do toque
             }
             val stroke = GestureDescription.StrokeDescription(path, 0L, pressDurationMs.coerceAtLeast(10L))
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
-            dispatchGesture(gesture, object : GestureResultCallback() {
+            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    continuation.resume(true)
+                    Log.i(TAG, "Clique executado com sucesso em ($x, $y)")
+                    if (continuation.isActive) continuation.resume(true)
                 }
 
                 override fun onCancelled(gestureDescription: GestureDescription?) {
-                    continuation.resume(false)
+                    Log.w(TAG, "Clique cancelado pelo sistema em ($x, $y)")
+                    if (continuation.isActive) continuation.resume(false)
                 }
             }, mainHandler)
+
+            if (!dispatched) {
+                Log.e(TAG, "dispatchGesture retornou false ao enfileirar para ($x, $y)")
+                if (continuation.isActive) continuation.resume(false)
+            }
         }
     }
 
@@ -86,19 +94,27 @@ class HyperTapAccessibilityService : AccessibilityService() {
             points.take(10).forEach { point ->
                 val path = Path().apply {
                     moveTo(point.x, point.y)
+                    lineTo(point.x, point.y)
                 }
                 builder.addStroke(GestureDescription.StrokeDescription(path, 0L, duration))
             }
 
-            dispatchGesture(builder.build(), object : GestureResultCallback() {
+            val dispatched = dispatchGesture(builder.build(), object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    continuation.resume(true)
+                    Log.i(TAG, "Multi-clique executado com sucesso (${points.size} pontos)")
+                    if (continuation.isActive) continuation.resume(true)
                 }
 
                 override fun onCancelled(gestureDescription: GestureDescription?) {
-                    continuation.resume(false)
+                    Log.w(TAG, "Multi-clique cancelado pelo sistema")
+                    if (continuation.isActive) continuation.resume(false)
                 }
             }, mainHandler)
+
+            if (!dispatched) {
+                Log.e(TAG, "dispatchGesture retornou false no multiClick")
+                if (continuation.isActive) continuation.resume(false)
+            }
         }
     }
 
@@ -120,15 +136,22 @@ class HyperTapAccessibilityService : AccessibilityService() {
             val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs.coerceAtLeast(50L))
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
-            dispatchGesture(gesture, object : GestureResultCallback() {
+            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    continuation.resume(true)
+                    Log.i(TAG, "Arrasto concluído de ($startX, $startY) até ($endX, $endY)")
+                    if (continuation.isActive) continuation.resume(true)
                 }
 
                 override fun onCancelled(gestureDescription: GestureDescription?) {
-                    continuation.resume(false)
+                    Log.w(TAG, "Arrasto cancelado pelo sistema")
+                    if (continuation.isActive) continuation.resume(false)
                 }
             }, mainHandler)
+
+            if (!dispatched) {
+                Log.e(TAG, "dispatchGesture retornou false no swipe")
+                if (continuation.isActive) continuation.resume(false)
+            }
         }
     }
 
@@ -185,15 +208,22 @@ class HyperTapAccessibilityService : AccessibilityService() {
                 builder.addStroke(stroke)
             }
 
-            dispatchGesture(builder.build(), object : GestureResultCallback() {
+            val dispatched = dispatchGesture(builder.build(), object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    continuation.resume(true)
+                    Log.i(TAG, "Arrasto contínuo concluído (${strokes.size} segmentos)")
+                    if (continuation.isActive) continuation.resume(true)
                 }
 
                 override fun onCancelled(gestureDescription: GestureDescription?) {
-                    continuation.resume(false)
+                    Log.w(TAG, "Arrasto contínuo cancelado pelo sistema")
+                    if (continuation.isActive) continuation.resume(false)
                 }
             }, mainHandler)
+
+            if (!dispatched) {
+                Log.e(TAG, "dispatchGesture retornou false no continuousDrag")
+                if (continuation.isActive) continuation.resume(false)
+            }
         }
     }
 }

@@ -90,37 +90,41 @@ class MacroExecutionEngine(
         when (action) {
             is TapAction.SingleTap -> {
                 _onActionExecuted.tryEmit(Pair(action.point.x, action.point.y))
-                service.click(
+                val success = service.click(
                     x = action.point.x,
                     y = action.point.y,
                     pressDurationMs = action.pressDurationMs
                 )
+                Log.d(TAG, "SingleTap executado em (${action.point.x}, ${action.point.y}) -> sucesso: $success")
             }
             is TapAction.MultiTap -> {
                 action.points.forEach { _onActionExecuted.tryEmit(Pair(it.x, it.y)) }
-                service.multiClick(
+                val success = service.multiClick(
                     points = action.points,
                     pressDurationMs = action.pressDurationMs
                 )
+                Log.d(TAG, "MultiTap executado (${action.points.size} pontos) -> sucesso: $success")
             }
             is TapAction.Swipe -> {
-                service.swipe(
+                val success = service.swipe(
                     startX = action.startPoint.x,
                     startY = action.startPoint.y,
                     endX = action.endPoint.x,
                     endY = action.endPoint.y,
                     durationMs = action.durationMs
                 )
+                Log.d(TAG, "Swipe executado -> sucesso: $success")
             }
             is TapAction.ContinuousLoop -> {
                 val loops = if (action.loopCount <= 0) 1 else action.loopCount
                 for (l in 0 until loops) {
                     if (isPaused || _executionState.value != ExecutionState.RUNNING) break
-                    service.continuousDrag(
+                    val success = service.continuousDrag(
                         waypoints = action.waypoints,
                         stepDurationMs = action.stepDurationMs,
                         isClosedLoop = action.isClosedLoop
                     )
+                    Log.d(TAG, "ContinuousLoop ciclo $l -> sucesso: $success")
                 }
             }
         }
