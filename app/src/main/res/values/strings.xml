@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">HyperTap</string>
+    <string name="app_subtitle">Cliques Automatizados</string>
+    <string name="accessibility_service_description">O serviço de acessibilidade do HyperTap é utilizado para simular e despachar toques, múltiplos cliques, swipes e arrastos contínuos na tela conforme configurado pelo usuário.</string>
+    <string name="notification_channel_name">Serviço de Automação HyperTap</string>
+    <string name="notification_channel_desc">Notificação contínua mantendo o menu flutuante ativo no sistema.</string>
+    <string name="notification_title">HyperTap está ativo</string>
+    <string name="notification_text">Toque para gerenciar os controles flutuantes.</string>
+</resources>
+

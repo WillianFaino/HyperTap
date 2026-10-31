@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Permissões do Sistema -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:name=".HyperTapApp"
+        android:allowBackup="true"
+        android:icon="@android:drawable/ic_menu_compass"
+        android:label="@string/app_name"
+        android:roundIcon="@android:drawable/ic_menu_compass"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.HyperTap"
+        tools:targetApi="36">
+
+        <!-- Atividade Principal -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:windowSoftInputMode="adjustResize"
+            android:theme="@style/Theme.HyperTap">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Serviço de Acessibilidade (Injeção de Gestos e Toques) -->
+        <service
+            android:name=".accessibility.HyperTapAccessibilityService"
+            android:exported="true"
+            android:label="HyperTap - Serviço de Toques"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- Serviço do Menu Flutuante e Alvos (Foreground Service) -->
+        <service
+            android:name=".overlay.FloatingOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Controle flutuante de automação de tela para cliques e gestos" />
+        </service>
+
+    </application>
+
+</manifest>
+
