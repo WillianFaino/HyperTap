@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
@@ -30,6 +31,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.font.FontWeight
@@ -117,6 +119,10 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     private val isClosedLoop = mutableStateOf(true)
     private val currentMarkerSize = mutableStateOf(MarkerSize.STANDARD)
     private val activeRipples = mutableStateListOf<TouchRippleEffect>()
+    private val globalDragStepDurationMs = mutableStateOf(250L)
+
+    private var lastScreenWidth: Int = 0
+    private var lastScreenHeight: Int = 0
 
     class InteractiveTarget(
         val id: String = UUID.randomUUID().toString(),
@@ -141,6 +147,8 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        lastScreenWidth = resources.displayMetrics.widthPixels
+        lastScreenHeight = resources.displayMetrics.heightPixels
         val database = HyperTapDatabase.getDatabase(this)
         macroRepository = MacroRepository(database.macroDao())
 
@@ -164,6 +172,63 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         startForeground(NOTIFICATION_ID, createNotification())
         initPathCanvasOverlay()
         initFloatingToolbar()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+
+        val newWidth = resources.displayMetrics.widthPixels
+        val newHeight = resources.displayMetrics.heightPixels
+        val oldWidth = lastScreenWidth
+        val oldHeight = lastScreenHeight
+
+        if (oldWidth > 0 && oldHeight > 0 && (oldWidth != newWidth || oldHeight != newHeight)) {
+            val sizePx = (currentMarkerSize.value.sizeDp * resources.displayMetrics.density).toInt()
+            val markerRadius = sizePx / 2f
+
+            // 1. Reposiciona todos os alvos proporcionalmente no novo espaço da tela
+            targetPoints.forEach { target ->
+                val ratioX = (target.x / oldWidth.toFloat()).coerceIn(0f, 1f)
+                val ratioY = (target.y / oldHeight.toFloat()).coerceIn(0f, 1f)
+
+                val newX = (ratioX * newWidth).coerceIn(markerRadius, newWidth - markerRadius)
+                val newY = (ratioY * newHeight).coerceIn(markerRadius, newHeight - markerRadius)
+
+                target.x = newX
+                target.y = newY
+
+                val view = activeTargetViews[target.id]
+                if (view != null) {
+                    val params = view.layoutParams as WindowManager.LayoutParams
+                    params.x = newX.toInt() - (sizePx / 2)
+                    params.y = newY.toInt() - (sizePx / 2)
+                    windowManager.updateViewLayout(view, params)
+                }
+            }
+
+            // 2. Reposiciona e mantém a barra de ferramentas flutuante dentro dos limites da tela
+            toolbarView?.let { toolbar ->
+                val params = toolbar.layoutParams as WindowManager.LayoutParams
+                val toolbarW = toolbar.width.coerceAtLeast(1)
+                val toolbarH = toolbar.height.coerceAtLeast(1)
+
+                val ratioX = (params.x.toFloat() / oldWidth.toFloat()).coerceIn(0f, 1f)
+                val ratioY = (params.y.toFloat() / oldHeight.toFloat()).coerceIn(0f, 1f)
+
+                params.x = (ratioX * newWidth).toInt().coerceIn(0, (newWidth - toolbarW).coerceAtLeast(0))
+                params.y = (ratioY * newHeight).toInt().coerceIn(0, (newHeight - toolbarH).coerceAtLeast(0))
+                windowManager.updateViewLayout(toolbar, params)
+            }
+
+            // 3. Atualiza o canvas de sobreposição
+            pathCanvasView?.let { canvas ->
+                val params = canvas.layoutParams as WindowManager.LayoutParams
+                windowManager.updateViewLayout(canvas, params)
+            }
+        }
+
+        lastScreenWidth = newWidth
+        lastScreenHeight = newHeight
     }
 
     private fun triggerRipple(x: Float, y: Float) {
@@ -260,11 +325,13 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 val mode by automationMode
                 val visible by isTargetsVisible
                 val closed by isClosedLoop
+                val currentSpeed by globalDragStepDurationMs
 
                 ContinuousPathOverlayCanvas(
                     waypoints = if (mode == AutomationMode.CONTINUOUS_DRAG_LOOP && visible) targetPoints else emptyList(),
                     isClosedLoop = closed,
-                    activeRipples = if (visible) activeRipples else emptyList()
+                    activeRipples = if (visible) activeRipples else emptyList(),
+                    stepDurationMs = currentSpeed
                 )
             }
         }
@@ -298,12 +365,15 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 val currentMode by automationMode
                 val closedLoop by isClosedLoop
                 val currentSize by currentMarkerSize
+                val configuration = LocalConfiguration.current
+                val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
                 FloatingToolbarComposable(
                     executionState = execState,
                     automationMode = currentMode,
                     isClosedLoop = closedLoop,
                     markerSize = currentSize,
+                    isLandscape = isLandscape,
                     onToggleMode = {
                         automationMode.value = if (automationMode.value == AutomationMode.SINGLE_OR_MULTI_TAP)
                             AutomationMode.CONTINUOUS_DRAG_LOOP
@@ -315,6 +385,9 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     },
                     onCycleMarkerSize = {
                         cycleMarkerSize()
+                    },
+                    onOpenSpeedConfig = {
+                        showGlobalSpeedDialog()
                     },
                     onPlayPause = {
                         togglePlayPause()
@@ -336,8 +409,13 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                         stopSelf()
                     },
                     onDragToolbar = { deltaX, deltaY ->
-                        layoutParams.x += deltaX.toInt()
-                        layoutParams.y += deltaY.toInt()
+                        val screenWidth = resources.displayMetrics.widthPixels
+                        val screenHeight = resources.displayMetrics.heightPixels
+                        val toolbarW = this.width.coerceAtLeast(1)
+                        val toolbarH = this.height.coerceAtLeast(1)
+
+                        layoutParams.x = (layoutParams.x + deltaX.toInt()).coerceIn(0, (screenWidth - toolbarW).coerceAtLeast(0))
+                        layoutParams.y = (layoutParams.y + deltaY.toInt()).coerceIn(0, (screenHeight - toolbarH).coerceAtLeast(0))
                         windowManager.updateViewLayout(this, layoutParams)
                     }
                 )
@@ -387,7 +465,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     private fun showTargetConfigDialog(target: InteractiveTarget) {
         dismissConfigDialog()
 
-        val dialogWidthPx = (320 * resources.displayMetrics.density).toInt()
+        val dialogWidthPx = (340 * resources.displayMetrics.density).toInt()
 
         val dialogParams = WindowManager.LayoutParams(
             dialogWidthPx,
@@ -421,6 +499,50 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     onDelete = {
                         deleteTarget(target)
                         dismissConfigDialog()
+                    },
+                    onDismiss = {
+                        dismissConfigDialog()
+                    }
+                )
+            }
+        }
+
+        currentConfigDialogView = dialogView
+        windowManager.addView(dialogView, dialogParams)
+    }
+
+    private fun showGlobalSpeedDialog() {
+        dismissConfigDialog()
+
+        val dialogWidthPx = (340 * resources.displayMetrics.density).toInt()
+
+        val dialogParams = WindowManager.LayoutParams(
+            dialogWidthPx,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+
+        val dialogView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingOverlayService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingOverlayService)
+            setContent {
+                val currentSpeed by globalDragStepDurationMs
+                GlobalSpeedConfigDialog(
+                    currentStepDurationMs = currentSpeed,
+                    onSave = { newSpeed, applyToAll ->
+                        globalDragStepDurationMs.value = newSpeed
+                        if (applyToAll) {
+                            targetPoints.forEach { it.delayMs = newSpeed }
+                        }
                     },
                     onDismiss = {
                         dismissConfigDialog()
@@ -577,7 +699,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                             TapAction.ContinuousLoop(
                                 id = UUID.randomUUID().toString(),
                                 waypoints = waypoints,
-                                stepDurationMs = 250L,
+                                stepDurationMs = globalDragStepDurationMs.value,
                                 loopCount = 1,
                                 isClosedLoop = isClosedLoop.value,
                                 delayBeforeMs = 100L
@@ -618,7 +740,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                         TapAction.ContinuousLoop(
                             id = UUID.randomUUID().toString(),
                             waypoints = waypoints,
-                            stepDurationMs = 250L,
+                            stepDurationMs = globalDragStepDurationMs.value,
                             loopCount = 1,
                             isClosedLoop = isClosedLoop.value,
                             delayBeforeMs = 100L
@@ -669,9 +791,11 @@ fun FloatingToolbarComposable(
     automationMode: FloatingOverlayService.AutomationMode,
     isClosedLoop: Boolean,
     markerSize: FloatingOverlayService.MarkerSize,
+    isLandscape: Boolean,
     onToggleMode: () -> Unit,
     onToggleClosedLoop: () -> Unit,
     onCycleMarkerSize: () -> Unit,
+    onOpenSpeedConfig: () -> Unit,
     onPlayPause: () -> Unit,
     onAddPoint: () -> Unit,
     onRemovePoint: () -> Unit,
@@ -681,9 +805,8 @@ fun FloatingToolbarComposable(
     onDragToolbar: (Float, Float) -> Unit
 ) {
     Surface(
-        modifier = Modifier
-            .width(54.dp)
-            .clip(RoundedCornerShape(24.dp))
+        modifier = (if (isLandscape) Modifier.height(52.dp) else Modifier.width(54.dp))
+            .clip(RoundedCornerShape(26.dp))
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
@@ -694,106 +817,235 @@ fun FloatingToolbarComposable(
         tonalElevation = 8.dp,
         shadowElevation = 12.dp
     ) {
-        Column(
-            modifier = Modifier.padding(vertical = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            // Indicador de arrasto
-            Box(
-                modifier = Modifier
-                    .width(20.dp)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(Color.Gray.copy(alpha = 0.5f))
-            )
-
-            Spacer(modifier = Modifier.height(2.dp))
-
-            // Alternar Modo (Cliques Pontuais vs Arrasto Contínuo em Loop)
-            IconButton(onClick = onToggleMode) {
-                Icon(
-                    imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                        Icons.Default.Gesture
-                    else
-                        Icons.Default.TouchApp,
-                    contentDescription = "Alternar Modo",
-                    tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                        PurpleAccent
-                    else
-                        CyanPrimary
-                )
-            }
-
-            // Alternar Loop Fechado vs Aberto (Aparece apenas no modo arrasto)
-            if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
-                IconButton(onClick = onToggleClosedLoop) {
-                    Icon(
-                        imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
-                        contentDescription = "Loop Fechado ou Aberto",
-                        tint = if (isClosedLoop) CyanPrimary else Color.LightGray
-                    )
-                }
-            }
-
-            HorizontalDivider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
-
-            // Play / Pause
-            IconButton(onClick = onPlayPause) {
-                Icon(
-                    imageVector = when (executionState) {
-                        ExecutionState.RUNNING -> Icons.Default.Pause
-                        else -> Icons.Default.PlayArrow
-                    },
-                    contentDescription = "Iniciar ou Pausar",
-                    tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
-                )
-            }
-
-            // Adicionar Ponto / Waypoint
-            IconButton(onClick = onAddPoint) {
-                Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
-            }
-
-            // Remover Ponto
-            IconButton(onClick = onRemovePoint) {
-                Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
-            }
-
-            // Alternar Tamanho do Marcador (P, M, G)
-            IconButton(onClick = onCycleMarkerSize) {
+        if (isLandscape) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Indicador de arrasto vertical
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF252A38))
-                        .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = markerSize.label,
-                        color = CyanPrimary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        .width(4.dp)
+                        .height(20.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.Gray.copy(alpha = 0.5f))
+                )
+
+                Spacer(modifier = Modifier.width(2.dp))
+
+                // Alternar Modo
+                IconButton(onClick = onToggleMode) {
+                    Icon(
+                        imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                            Icons.Default.Gesture
+                        else
+                            Icons.Default.TouchApp,
+                        contentDescription = "Alternar Modo",
+                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                            PurpleAccent
+                        else
+                            CyanPrimary
                     )
                 }
+
+                // Alternar Loop Fechado
+                if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
+                    IconButton(onClick = onToggleClosedLoop) {
+                        Icon(
+                            imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
+                            contentDescription = "Loop Fechado ou Aberto",
+                            tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                        )
+                    }
+                }
+
+                VerticalDivider(color = Color(0xFF2E3340), modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
+
+                // Play / Pause
+                IconButton(onClick = onPlayPause) {
+                    Icon(
+                        imageVector = when (executionState) {
+                            ExecutionState.RUNNING -> Icons.Default.Pause
+                            else -> Icons.Default.PlayArrow
+                        },
+                        contentDescription = "Iniciar ou Pausar",
+                        tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                    )
+                }
+
+                // Adicionar Alvo
+                IconButton(onClick = onAddPoint) {
+                    Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
+                }
+
+                // Remover Alvo
+                IconButton(onClick = onRemovePoint) {
+                    Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
+                }
+
+                // Alternar Tamanho Marcador (P, M, G)
+                IconButton(onClick = onCycleMarkerSize) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF252A38))
+                            .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = markerSize.label,
+                            color = CyanPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Velocidade Global do Fluxo / Arrasto (⚡)
+                IconButton(onClick = onOpenSpeedConfig) {
+                    Icon(
+                        imageVector = Icons.Default.Speed,
+                        contentDescription = "Velocidade Global do Fluxo",
+                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                            PurpleAccent
+                        else
+                            CyanPrimary
+                    )
+                }
+
+                // Visibilidade
+                IconButton(onClick = onToggleVisibility) {
+                    Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
+                }
+
+                // Salvar
+                IconButton(onClick = onSaveMacro) {
+                    Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
+                }
+
+                VerticalDivider(color = Color.DarkGray, modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
+
+                // Fechar
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                }
             }
+        } else {
+            Column(
+                modifier = Modifier.padding(vertical = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Indicador de arrasto horizontal
+                Box(
+                    modifier = Modifier
+                        .width(20.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(Color.Gray.copy(alpha = 0.5f))
+                )
 
-            // Visibilidade dos Alvos e Linhas
-            IconButton(onClick = onToggleVisibility) {
-                Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
-            }
+                Spacer(modifier = Modifier.height(2.dp))
 
-            // Salvar
-            IconButton(onClick = onSaveMacro) {
-                Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
-            }
+                // Alternar Modo
+                IconButton(onClick = onToggleMode) {
+                    Icon(
+                        imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                            Icons.Default.Gesture
+                        else
+                            Icons.Default.TouchApp,
+                        contentDescription = "Alternar Modo",
+                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                            PurpleAccent
+                        else
+                            CyanPrimary
+                    )
+                }
 
-            HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 8.dp))
+                // Alternar Loop Fechado
+                if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
+                    IconButton(onClick = onToggleClosedLoop) {
+                        Icon(
+                            imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
+                            contentDescription = "Loop Fechado ou Aberto",
+                            tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                        )
+                    }
+                }
 
-            // Fechar
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                HorizontalDivider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
+
+                // Play / Pause
+                IconButton(onClick = onPlayPause) {
+                    Icon(
+                        imageVector = when (executionState) {
+                            ExecutionState.RUNNING -> Icons.Default.Pause
+                            else -> Icons.Default.PlayArrow
+                        },
+                        contentDescription = "Iniciar ou Pausar",
+                        tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                    )
+                }
+
+                // Adicionar Alvo
+                IconButton(onClick = onAddPoint) {
+                    Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
+                }
+
+                // Remover Alvo
+                IconButton(onClick = onRemovePoint) {
+                    Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
+                }
+
+                // Alternar Tamanho Marcador (P, M, G)
+                IconButton(onClick = onCycleMarkerSize) {
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF252A38))
+                            .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = markerSize.label,
+                            color = CyanPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Velocidade Global do Fluxo / Arrasto (⚡)
+                IconButton(onClick = onOpenSpeedConfig) {
+                    Icon(
+                        imageVector = Icons.Default.Speed,
+                        contentDescription = "Velocidade Global do Fluxo",
+                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                            PurpleAccent
+                        else
+                            CyanPrimary
+                    )
+                }
+
+                // Visibilidade
+                IconButton(onClick = onToggleVisibility) {
+                    Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
+                }
+
+                // Salvar
+                IconButton(onClick = onSaveMacro) {
+                    Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
+                }
+
+                HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 8.dp))
+
+                // Fechar
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                }
             }
         }
     }
