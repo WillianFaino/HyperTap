@@ -32,6 +32,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontWeight
+import com.hypertap.autoclicker.ui.theme.CyanPrimary
+import com.hypertap.autoclicker.ui.theme.PurpleAccent
+import com.hypertap.autoclicker.ui.theme.StatusActive
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
