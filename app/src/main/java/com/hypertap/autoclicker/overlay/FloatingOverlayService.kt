@@ -58,6 +58,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.*
 import java.util.UUID
 
 class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwner {
@@ -97,6 +98,12 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         CONTINUOUS_DRAG_LOOP
     }
 
+    enum class MarkerSize(val label: String, val sizeDp: Int, val fontSizeSp: Int) {
+        COMPACT("P", 34, 13),
+        STANDARD("M", 46, 16),
+        LARGE("G", 58, 20)
+    }
+
     // Views de sobreposição
     private var toolbarView: ComposeView? = null
     private var pathCanvasView: ComposeView? = null
@@ -108,6 +115,8 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     private val isTargetsVisible = mutableStateOf(true)
     private val automationMode = mutableStateOf(AutomationMode.SINGLE_OR_MULTI_TAP)
     private val isClosedLoop = mutableStateOf(true)
+    private val currentMarkerSize = mutableStateOf(MarkerSize.STANDARD)
+    private val activeRipples = mutableStateListOf<TouchRippleEffect>()
 
     class InteractiveTarget(
         val id: String = UUID.randomUUID().toString(),
@@ -135,9 +144,49 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         val database = HyperTapDatabase.getDatabase(this)
         macroRepository = MacroRepository(database.macroDao())
 
+        // Monitora cliques em tempo real para disparar efeitos visuais de onda
+        serviceScope.launch {
+            executionEngine.onActionExecuted.collect { (x, y) ->
+                triggerRipple(x, y)
+            }
+        }
+
         startForeground(NOTIFICATION_ID, createNotification())
         initPathCanvasOverlay()
         initFloatingToolbar()
+    }
+
+    private fun triggerRipple(x: Float, y: Float) {
+        val ripple = TouchRippleEffect(
+            id = System.nanoTime(),
+            x = x,
+            y = y,
+            startMillis = System.currentTimeMillis()
+        )
+        activeRipples.add(ripple)
+        serviceScope.launch {
+            kotlinx.coroutines.delay(500)
+            activeRipples.remove(ripple)
+        }
+    }
+
+    private fun cycleMarkerSize() {
+        val next = when (currentMarkerSize.value) {
+            MarkerSize.STANDARD -> MarkerSize.LARGE
+            MarkerSize.LARGE -> MarkerSize.COMPACT
+            MarkerSize.COMPACT -> MarkerSize.STANDARD
+        }
+        currentMarkerSize.value = next
+        val sizePx = (next.sizeDp * resources.displayMetrics.density).toInt()
+        activeTargetViews.forEach { (id, view) ->
+            val target = targetPoints.find { it.id == id } ?: return@forEach
+            val params = view.layoutParams as WindowManager.LayoutParams
+            params.width = sizePx
+            params.height = sizePx
+            params.x = target.x.toInt() - (sizePx / 2)
+            params.y = target.y.toInt() - (sizePx / 2)
+            windowManager.updateViewLayout(view, params)
+        }
     }
 
     private fun createNotification(): Notification {
@@ -202,12 +251,11 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 val visible by isTargetsVisible
                 val closed by isClosedLoop
 
-                if (mode == AutomationMode.CONTINUOUS_DRAG_LOOP && visible) {
-                    ContinuousPathOverlayCanvas(
-                        waypoints = targetPoints,
-                        isClosedLoop = closed
-                    )
-                }
+                ContinuousPathOverlayCanvas(
+                    waypoints = if (mode == AutomationMode.CONTINUOUS_DRAG_LOOP && visible) targetPoints else emptyList(),
+                    isClosedLoop = closed,
+                    activeRipples = if (visible) activeRipples else emptyList()
+                )
             }
         }
 
@@ -239,11 +287,13 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 val execState by executionEngine.executionState.collectAsState()
                 val currentMode by automationMode
                 val closedLoop by isClosedLoop
+                val currentSize by currentMarkerSize
 
                 FloatingToolbarComposable(
                     executionState = execState,
                     automationMode = currentMode,
                     isClosedLoop = closedLoop,
+                    markerSize = currentSize,
                     onToggleMode = {
                         automationMode.value = if (automationMode.value == AutomationMode.SINGLE_OR_MULTI_TAP)
                             AutomationMode.CONTINUOUS_DRAG_LOOP
@@ -252,6 +302,9 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     },
                     onToggleClosedLoop = {
                         isClosedLoop.value = !isClosedLoop.value
+                    },
+                    onCycleMarkerSize = {
+                        cycleMarkerSize()
                     },
                     onPlayPause = {
                         togglePlayPause()
@@ -378,7 +431,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     }
 
     private fun renderTargetView(target: InteractiveTarget) {
-        val sizePx = (48 * resources.displayMetrics.density).toInt()
+        val sizePx = (currentMarkerSize.value.sizeDp * resources.displayMetrics.density).toInt()
 
         val params = WindowManager.LayoutParams(
             sizePx,
@@ -402,6 +455,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             setViewTreeSavedStateRegistryOwner(this@FloatingOverlayService)
             setContent {
                 val mode by automationMode
+                val currentSize by currentMarkerSize
                 val isDrag = mode == AutomationMode.CONTINUOUS_DRAG_LOOP
                 val isFirst = target.index == 1
 
@@ -423,7 +477,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     Text(
                         text = if (isDrag) "W${target.index}" else "${target.index}",
                         color = if (isDrag) Color.White else Color.Black,
-                        fontSize = 16.sp,
+                        fontSize = currentSize.fontSizeSp.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -587,8 +641,10 @@ fun FloatingToolbarComposable(
     executionState: ExecutionState,
     automationMode: FloatingOverlayService.AutomationMode,
     isClosedLoop: Boolean,
+    markerSize: FloatingOverlayService.MarkerSize,
     onToggleMode: () -> Unit,
     onToggleClosedLoop: () -> Unit,
+    onCycleMarkerSize: () -> Unit,
     onPlayPause: () -> Unit,
     onAddPoint: () -> Unit,
     onRemovePoint: () -> Unit,
@@ -653,7 +709,7 @@ fun FloatingToolbarComposable(
                 }
             }
 
-            Divider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
+            HorizontalDivider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
 
             // Play / Pause
             IconButton(onClick = onPlayPause) {
@@ -677,6 +733,25 @@ fun FloatingToolbarComposable(
                 Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
             }
 
+            // Alternar Tamanho do Marcador (P, M, G)
+            IconButton(onClick = onCycleMarkerSize) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF252A38))
+                        .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = markerSize.label,
+                        color = CyanPrimary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
             // Visibilidade dos Alvos e Linhas
             IconButton(onClick = onToggleVisibility) {
                 Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
@@ -687,7 +762,7 @@ fun FloatingToolbarComposable(
                 Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
             }
 
-            Divider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 8.dp))
+            HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 8.dp))
 
             // Fechar
             IconButton(onClick = onClose) {
