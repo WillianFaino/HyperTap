@@ -90,20 +90,27 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 
     // Views de sobreposição
     private var toolbarView: ComposeView? = null
-    private val activeTargetViews = mutableListOf<View>()
+    private val activeTargetViews = mutableMapOf<String, View>()
+    private var currentConfigDialogView: ComposeView? = null
 
     // Estados observáveis compartilhados
     private val targetPoints = mutableStateListOf<InteractiveTarget>()
     private val isTargetsVisible = mutableStateOf(true)
 
-    data class InteractiveTarget(
+    class InteractiveTarget(
         val id: String = UUID.randomUUID().toString(),
-        var index: Int,
-        var x: Float,
-        var y: Float,
-        var delayMs: Long = 200L,
-        var pressDurationMs: Long = 50L
-    )
+        initialIndex: Int,
+        initialX: Float,
+        initialY: Float,
+        initialDelayMs: Long = 200L,
+        initialPressDurationMs: Long = 50L
+    ) {
+        var index by mutableStateOf(initialIndex)
+        var x by mutableStateOf(initialX)
+        var y by mutableStateOf(initialY)
+        var delayMs by mutableStateOf(initialDelayMs)
+        var pressDurationMs by mutableStateOf(initialPressDurationMs)
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -218,12 +225,11 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 
     private fun addNewTarget() {
         val newIndex = targetPoints.size + 1
-        // Posição central na tela
         val displayMetrics = resources.displayMetrics
         val target = InteractiveTarget(
-            index = newIndex,
-            x = (displayMetrics.widthPixels / 2f),
-            y = (displayMetrics.heightPixels / 2f)
+            initialIndex = newIndex,
+            initialX = (displayMetrics.widthPixels / 2f),
+            initialY = (displayMetrics.heightPixels / 2f)
         )
         targetPoints.add(target)
         renderTargetView(target)
@@ -232,16 +238,82 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     private fun removeLastTarget() {
         if (targetPoints.isNotEmpty()) {
             val lastTarget = targetPoints.removeLast()
-            if (activeTargetViews.isNotEmpty()) {
-                val view = activeTargetViews.removeLast()
+            activeTargetViews.remove(lastTarget.id)?.let { view ->
                 windowManager.removeView(view)
             }
         }
     }
 
+    private fun deleteTarget(target: InteractiveTarget) {
+        targetPoints.remove(target)
+        activeTargetViews.remove(target.id)?.let { view ->
+            windowManager.removeView(view)
+        }
+        // Re-indexa os alvos restantes automaticamente
+        targetPoints.forEachIndexed { idx, t ->
+            t.index = idx + 1
+        }
+    }
+
     private fun updateTargetsVisibility() {
         val visibility = if (isTargetsVisible.value) View.VISIBLE else View.GONE
-        activeTargetViews.forEach { it.visibility = visibility }
+        activeTargetViews.values.forEach { it.visibility = visibility }
+    }
+
+    private fun showTargetConfigDialog(target: InteractiveTarget) {
+        dismissConfigDialog()
+
+        val dialogWidthPx = (320 * resources.displayMetrics.density).toInt()
+
+        val dialogParams = WindowManager.LayoutParams(
+            dialogWidthPx,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.CENTER
+        }
+
+        val dialogView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingOverlayService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingOverlayService)
+            setContent {
+                TargetConfigDialog(
+                    targetIndex = target.index,
+                    posX = target.x,
+                    posY = target.y,
+                    currentDelayMs = target.delayMs,
+                    currentDurationMs = target.pressDurationMs,
+                    onSave = { newDelay, newDuration ->
+                        target.delayMs = newDelay
+                        target.pressDurationMs = newDuration
+                    },
+                    onDelete = {
+                        deleteTarget(target)
+                        dismissConfigDialog()
+                    },
+                    onDismiss = {
+                        dismissConfigDialog()
+                    }
+                )
+            }
+        }
+
+        currentConfigDialogView = dialogView
+        windowManager.addView(dialogView, dialogParams)
+    }
+
+    private fun dismissConfigDialog() {
+        currentConfigDialogView?.let { view ->
+            windowManager.removeView(view)
+            currentConfigDialogView = null
+        }
     }
 
     private fun renderTargetView(target: InteractiveTarget) {
@@ -279,7 +351,8 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     Text(
                         text = "${target.index}",
                         color = Color.Black,
-                        fontSize = 18.sp
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -289,6 +362,8 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 private var initialY = 0
                 private var initialTouchX = 0f
                 private var initialTouchY = 0f
+                private var touchDownTime = 0L
+                private var hasMoved = false
 
                 override fun onTouch(v: View, event: MotionEvent): Boolean {
                     when (event.action) {
@@ -297,16 +372,31 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                             initialY = params.y
                             initialTouchX = event.rawX
                             initialTouchY = event.rawY
+                            touchDownTime = System.currentTimeMillis()
+                            hasMoved = false
                             return true
                         }
                         MotionEvent.ACTION_MOVE -> {
-                            params.x = initialX + (event.rawX - initialTouchX).toInt()
-                            params.y = initialY + (event.rawY - initialTouchY).toInt()
+                            val dx = (event.rawX - initialTouchX).toInt()
+                            val dy = (event.rawY - initialTouchY).toInt()
+                            if (kotlin.math.abs(dx) > 10 || kotlin.math.abs(dy) > 10) {
+                                hasMoved = true
+                            }
+                            params.x = initialX + dx
+                            params.y = initialY + dy
                             windowManager.updateViewLayout(v, params)
 
                             // Atualiza a coordenada central do alvo
                             target.x = params.x + (sizePx / 2f)
                             target.y = params.y + (sizePx / 2f)
+                            return true
+                        }
+                        MotionEvent.ACTION_UP -> {
+                            val duration = System.currentTimeMillis() - touchDownTime
+                            if (!hasMoved && duration < 350) {
+                                // Toque rápido: abre o diálogo de configuração individual
+                                showTargetConfigDialog(target)
+                            }
                             return true
                         }
                     }
@@ -315,7 +405,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             })
         }
 
-        activeTargetViews.add(targetView)
+        activeTargetViews[target.id] = targetView
         windowManager.addView(targetView, params)
     }
 
@@ -368,8 +458,9 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         executionEngine.stop()
         serviceScope.cancel()
 
+        dismissConfigDialog()
         toolbarView?.let { windowManager.removeView(it) }
-        activeTargetViews.forEach { windowManager.removeView(it) }
+        activeTargetViews.values.forEach { windowManager.removeView(it) }
         activeTargetViews.clear()
 
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
