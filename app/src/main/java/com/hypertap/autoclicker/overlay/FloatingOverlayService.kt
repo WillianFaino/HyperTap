@@ -88,14 +88,22 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
 
+    enum class AutomationMode {
+        SINGLE_OR_MULTI_TAP,
+        CONTINUOUS_DRAG_LOOP
+    }
+
     // Views de sobreposição
     private var toolbarView: ComposeView? = null
+    private var pathCanvasView: ComposeView? = null
     private val activeTargetViews = mutableMapOf<String, View>()
     private var currentConfigDialogView: ComposeView? = null
 
     // Estados observáveis compartilhados
     private val targetPoints = mutableStateListOf<InteractiveTarget>()
     private val isTargetsVisible = mutableStateOf(true)
+    private val automationMode = mutableStateOf(AutomationMode.SINGLE_OR_MULTI_TAP)
+    private val isClosedLoop = mutableStateOf(true)
 
     class InteractiveTarget(
         val id: String = UUID.randomUUID().toString(),
@@ -124,6 +132,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         macroRepository = MacroRepository(database.macroDao())
 
         startForeground(NOTIFICATION_ID, createNotification())
+        initPathCanvasOverlay()
         initFloatingToolbar()
     }
 
@@ -166,6 +175,41 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         }
     }
 
+    private fun initPathCanvasOverlay() {
+        val layoutParams = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+
+        pathCanvasView = ComposeView(this).apply {
+            setViewTreeLifecycleOwner(this@FloatingOverlayService)
+            setViewTreeSavedStateRegistryOwner(this@FloatingOverlayService)
+            setContent {
+                val mode by automationMode
+                val visible by isTargetsVisible
+                val closed by isClosedLoop
+
+                if (mode == AutomationMode.CONTINUOUS_DRAG_LOOP && visible) {
+                    ContinuousPathOverlayCanvas(
+                        waypoints = targetPoints,
+                        isClosedLoop = closed
+                    )
+                }
+            }
+        }
+
+        windowManager.addView(pathCanvasView, layoutParams)
+    }
+
     private fun initFloatingToolbar() {
         val layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -189,9 +233,22 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             setViewTreeSavedStateRegistryOwner(this@FloatingOverlayService)
             setContent {
                 val execState by executionEngine.executionState.collectAsState()
+                val currentMode by automationMode
+                val closedLoop by isClosedLoop
 
                 FloatingToolbarComposable(
                     executionState = execState,
+                    automationMode = currentMode,
+                    isClosedLoop = closedLoop,
+                    onToggleMode = {
+                        automationMode.value = if (automationMode.value == AutomationMode.SINGLE_OR_MULTI_TAP)
+                            AutomationMode.CONTINUOUS_DRAG_LOOP
+                        else
+                            AutomationMode.SINGLE_OR_MULTI_TAP
+                    },
+                    onToggleClosedLoop = {
+                        isClosedLoop.value = !isClosedLoop.value
+                    },
                     onPlayPause = {
                         togglePlayPause()
                     },
@@ -340,18 +397,29 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             setViewTreeLifecycleOwner(this@FloatingOverlayService)
             setViewTreeSavedStateRegistryOwner(this@FloatingOverlayService)
             setContent {
+                val mode by automationMode
+                val isDrag = mode == AutomationMode.CONTINUOUS_DRAG_LOOP
+                val isFirst = target.index == 1
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .clip(CircleShape)
-                        .background(Color(0xCC00E5FF))
-                        .border(2.dp, Color.White, CircleShape),
+                        .background(
+                            if (isDrag) PurpleAccent.copy(alpha = 0.9f)
+                            else CyanPrimary.copy(alpha = 0.85f)
+                        )
+                        .border(
+                            width = if (isDrag && isFirst) 3.dp else 2.dp,
+                            color = if (isDrag && isFirst) StatusActive else Color.White,
+                            shape = CircleShape
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "${target.index}",
-                        color = Color.Black,
-                        fontSize = 18.sp,
+                        text = if (isDrag) "W${target.index}" else "${target.index}",
+                        color = if (isDrag) Color.White else Color.Black,
+                        fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -413,19 +481,39 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         when (executionEngine.executionState.value) {
             ExecutionState.IDLE -> {
                 if (targetPoints.isEmpty()) return
-                val actions = targetPoints.map { target ->
-                    TapAction.SingleTap(
-                        id = target.id,
-                        point = Point2D(target.x, target.y),
-                        pressDurationMs = target.pressDurationMs,
-                        delayBeforeMs = target.delayMs
+
+                val pattern = if (automationMode.value == AutomationMode.CONTINUOUS_DRAG_LOOP) {
+                    if (targetPoints.size < 2) return
+                    val waypoints = targetPoints.map { Point2D(it.x, it.y) }
+                    MacroPattern(
+                        name = "Arrasto Contínuo #${System.currentTimeMillis() % 1000}",
+                        repeatCount = 0,
+                        actions = listOf(
+                            TapAction.ContinuousLoop(
+                                id = UUID.randomUUID().toString(),
+                                waypoints = waypoints,
+                                stepDurationMs = 250L,
+                                loopCount = 1,
+                                isClosedLoop = isClosedLoop.value,
+                                delayBeforeMs = 100L
+                            )
+                        )
+                    )
+                } else {
+                    val actions = targetPoints.map { target ->
+                        TapAction.SingleTap(
+                            id = target.id,
+                            point = Point2D(target.x, target.y),
+                            pressDurationMs = target.pressDurationMs,
+                            delayBeforeMs = target.delayMs
+                        )
+                    }
+                    MacroPattern(
+                        name = "Sequência de Cliques #${System.currentTimeMillis() % 1000}",
+                        repeatCount = 0,
+                        actions = actions
                     )
                 }
-                val pattern = MacroPattern(
-                    name = "Padrão Atual",
-                    repeatCount = 0, // Infinito até pausar
-                    actions = actions
-                )
                 executionEngine.start(pattern)
             }
             ExecutionState.RUNNING -> executionEngine.pause()
@@ -436,19 +524,37 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     private fun saveCurrentMacro() {
         if (targetPoints.isEmpty()) return
         serviceScope.launch {
-            val actions = targetPoints.map { target ->
-                TapAction.SingleTap(
-                    id = target.id,
-                    point = Point2D(target.x, target.y),
-                    pressDurationMs = target.pressDurationMs,
-                    delayBeforeMs = target.delayMs
+            val pattern = if (automationMode.value == AutomationMode.CONTINUOUS_DRAG_LOOP) {
+                val waypoints = targetPoints.map { Point2D(it.x, it.y) }
+                MacroPattern(
+                    name = "Macro Arrasto Contínuo #${System.currentTimeMillis() % 1000}",
+                    repeatCount = 0,
+                    actions = listOf(
+                        TapAction.ContinuousLoop(
+                            id = UUID.randomUUID().toString(),
+                            waypoints = waypoints,
+                            stepDurationMs = 250L,
+                            loopCount = 1,
+                            isClosedLoop = isClosedLoop.value,
+                            delayBeforeMs = 100L
+                        )
+                    )
+                )
+            } else {
+                val actions = targetPoints.map { target ->
+                    TapAction.SingleTap(
+                        id = target.id,
+                        point = Point2D(target.x, target.y),
+                        pressDurationMs = target.pressDurationMs,
+                        delayBeforeMs = target.delayMs
+                    )
+                }
+                MacroPattern(
+                    name = "Macro Cliques #${System.currentTimeMillis() % 1000}",
+                    repeatCount = 0,
+                    actions = actions
                 )
             }
-            val pattern = MacroPattern(
-                name = "Padrão Salvo #${System.currentTimeMillis() % 1000}",
-                repeatCount = 0,
-                actions = actions
-            )
             macroRepository.saveMacro(pattern)
         }
     }
@@ -459,6 +565,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         serviceScope.cancel()
 
         dismissConfigDialog()
+        pathCanvasView?.let { windowManager.removeView(it) }
         toolbarView?.let { windowManager.removeView(it) }
         activeTargetViews.values.forEach { windowManager.removeView(it) }
         activeTargetViews.clear()
@@ -474,6 +581,10 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 @Composable
 fun FloatingToolbarComposable(
     executionState: ExecutionState,
+    automationMode: FloatingOverlayService.AutomationMode,
+    isClosedLoop: Boolean,
+    onToggleMode: () -> Unit,
+    onToggleClosedLoop: () -> Unit,
     onPlayPause: () -> Unit,
     onAddPoint: () -> Unit,
     onRemovePoint: () -> Unit,
@@ -512,6 +623,34 @@ fun FloatingToolbarComposable(
 
             Spacer(modifier = Modifier.height(2.dp))
 
+            // Alternar Modo (Cliques Pontuais vs Arrasto Contínuo em Loop)
+            IconButton(onClick = onToggleMode) {
+                Icon(
+                    imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                        Icons.Default.Gesture
+                    else
+                        Icons.Default.TouchApp,
+                    contentDescription = "Alternar Modo",
+                    tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                        PurpleAccent
+                    else
+                        CyanPrimary
+                )
+            }
+
+            // Alternar Loop Fechado vs Aberto (Aparece apenas no modo arrasto)
+            if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
+                IconButton(onClick = onToggleClosedLoop) {
+                    Icon(
+                        imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
+                        contentDescription = "Loop Fechado ou Aberto",
+                        tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                    )
+                }
+            }
+
+            Divider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
+
             // Play / Pause
             IconButton(onClick = onPlayPause) {
                 Icon(
@@ -524,7 +663,7 @@ fun FloatingToolbarComposable(
                 )
             }
 
-            // Adicionar Ponto
+            // Adicionar Ponto / Waypoint
             IconButton(onClick = onAddPoint) {
                 Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
             }
@@ -534,7 +673,7 @@ fun FloatingToolbarComposable(
                 Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
             }
 
-            // Visibilidade dos Alvos
+            // Visibilidade dos Alvos e Linhas
             IconButton(onClick = onToggleVisibility) {
                 Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
             }
