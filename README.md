@@ -40,3 +40,23 @@
    - Em **Informações do app** > **Outras permissões**, garanta que **Exibir janelas pop-up em segundo plano** esteja ativo.
    - Em **Economia de bateria**, defina como **Sem restrições** para que a automação não seja suspensa em sessões longas.
 
+---
+
+## 🚀 Como Compilar e Rodar no Aparelho
+
+### Opção 1: Via Script Automatizado (PowerShell)
+Com o POCO X8 Pro conectado via USB ou Wi-Fi Debugging:
+```powershell
+./scripts/deploy-poco.ps1
+```
+Para parear e conectar via Wi-Fi sem cabos:
+```powershell
+./scripts/deploy-poco.ps1 -WirelessPair -PairAddress "192.168.1.X:PORTA" -PairCode "CODIGO" -ConnectAddress "192.168.1.X:PORTA_CONEXAO"
+```
+
+### Opção 2: Pelo Android Studio
+1. Abra a pasta `hypertap` no **Android Studio**.
+2. Selecione seu **POCO X8 Pro** na barra de dispositivos superior.
+3. Clique no botão verde de **Run (Shift + F10)**.
+
+
