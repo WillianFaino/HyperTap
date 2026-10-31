@@ -47,21 +47,21 @@ Write-Host "Dispositivo conectado: $model (Android $androidVer, HyperOS: $hyperO
 Write-Host "`n[2/4] Compilando APK do HyperTap..." -ForegroundColor Yellow
 Set-Location "C:\Users\Pichau\.gemini\antigravity\scratch\hypertap"
 
-$buildResult = cmd /c "gradlew.bat assembleDebug"
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Erro durante a compilacao. Abra o projeto no Android Studio para verificar pendencias de SDK." -ForegroundColor Red
-    exit 1
+$apkPath = "app\build\outputs\apk\debug\app-debug.apk"
+if (Test-Path $apkPath) {
+    Remove-Item $apkPath -Force -ErrorAction SilentlyContinue
 }
 
-$apkPath = "app/build/outputs/apk/debug/app-debug.apk"
+cmd /c "gradlew.bat assembleDebug"
+
 if (-not (Test-Path $apkPath)) {
-    Write-Host "APK nao encontrado em $apkPath" -ForegroundColor Red
+    Write-Host "Erro durante a compilacao: APK nao gerado em $apkPath" -ForegroundColor Red
     exit 1
 }
 
 # 4. Instalação e Execução
 Write-Host "`n[3/4] Instalando APK no $model..." -ForegroundColor Yellow
-& $adb install -r -d -g $apkPath
+& $adb install -r -d -t -g $apkPath
 
 Write-Host "`n[4/4] Iniciando HyperTap na tela..." -ForegroundColor Yellow
 & $adb shell am start -n com.hypertap.autoclicker.debug/com.hypertap.autoclicker.MainActivity
