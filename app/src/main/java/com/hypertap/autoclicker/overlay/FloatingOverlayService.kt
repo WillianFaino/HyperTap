@@ -15,6 +15,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -120,6 +121,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     private val currentMarkerSize = mutableStateOf(MarkerSize.STANDARD)
     private val activeRipples = mutableStateListOf<TouchRippleEffect>()
     private val globalDragStepDurationMs = mutableStateOf(250L)
+    private val isToolbarExpanded = mutableStateOf(true)
 
     private var lastScreenWidth: Int = 0
     private var lastScreenHeight: Int = 0
@@ -365,6 +367,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 val currentMode by automationMode
                 val closedLoop by isClosedLoop
                 val currentSize by currentMarkerSize
+                val isExpanded by isToolbarExpanded
                 val configuration = LocalConfiguration.current
                 val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
@@ -374,6 +377,10 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     isClosedLoop = closedLoop,
                     markerSize = currentSize,
                     isLandscape = isLandscape,
+                    isExpanded = isExpanded,
+                    onToggleExpand = {
+                        isToolbarExpanded.value = !isToolbarExpanded.value
+                    },
                     onToggleMode = {
                         automationMode.value = if (automationMode.value == AutomationMode.SINGLE_OR_MULTI_TAP)
                             AutomationMode.CONTINUOUS_DRAG_LOOP
@@ -792,6 +799,8 @@ fun FloatingToolbarComposable(
     isClosedLoop: Boolean,
     markerSize: FloatingOverlayService.MarkerSize,
     isLandscape: Boolean,
+    isExpanded: Boolean,
+    onToggleExpand: () -> Unit,
     onToggleMode: () -> Unit,
     onToggleClosedLoop: () -> Unit,
     onCycleMarkerSize: () -> Unit,
@@ -805,8 +814,9 @@ fun FloatingToolbarComposable(
     onDragToolbar: (Float, Float) -> Unit
 ) {
     Surface(
-        modifier = (if (isLandscape) Modifier.height(52.dp) else Modifier.width(54.dp))
+        modifier = (if (isLandscape) Modifier.height(if (isExpanded) 52.dp else 48.dp) else Modifier.width(if (isExpanded) 54.dp else 48.dp))
             .clip(RoundedCornerShape(26.dp))
+            .animateContentSize()
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
@@ -819,7 +829,7 @@ fun FloatingToolbarComposable(
     ) {
         if (isLandscape) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
@@ -834,107 +844,130 @@ fun FloatingToolbarComposable(
 
                 Spacer(modifier = Modifier.width(2.dp))
 
-                // Alternar Modo
-                IconButton(onClick = onToggleMode) {
+                // Botão de Expandir / Colapsar
+                IconButton(onClick = onToggleExpand) {
                     Icon(
-                        imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                            Icons.Default.Gesture
-                        else
-                            Icons.Default.TouchApp,
-                        contentDescription = "Alternar Modo",
-                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                            PurpleAccent
-                        else
-                            CyanPrimary
+                        imageVector = if (isExpanded) Icons.Default.ChevronLeft else Icons.Default.ChevronRight,
+                        contentDescription = if (isExpanded) "Recolher Menu" else "Expandir Menu",
+                        tint = CyanPrimary
                     )
                 }
 
-                // Alternar Loop Fechado
-                if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
-                    IconButton(onClick = onToggleClosedLoop) {
+                if (!isExpanded) {
+                    // Quando colapsado no modo paisagem: apenas Play/Pause rápido
+                    IconButton(onClick = onPlayPause) {
                         Icon(
-                            imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
-                            contentDescription = "Loop Fechado ou Aberto",
-                            tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                            imageVector = when (executionState) {
+                                ExecutionState.RUNNING -> Icons.Default.Pause
+                                else -> Icons.Default.PlayArrow
+                            },
+                            contentDescription = "Iniciar ou Pausar",
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
                         )
                     }
-                }
-
-                VerticalDivider(color = Color(0xFF2E3340), modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
-
-                // Play / Pause
-                IconButton(onClick = onPlayPause) {
-                    Icon(
-                        imageVector = when (executionState) {
-                            ExecutionState.RUNNING -> Icons.Default.Pause
-                            else -> Icons.Default.PlayArrow
-                        },
-                        contentDescription = "Iniciar ou Pausar",
-                        tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
-                    )
-                }
-
-                // Adicionar Alvo
-                IconButton(onClick = onAddPoint) {
-                    Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
-                }
-
-                // Remover Alvo
-                IconButton(onClick = onRemovePoint) {
-                    Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
-                }
-
-                // Alternar Tamanho Marcador (P, M, G)
-                IconButton(onClick = onCycleMarkerSize) {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF252A38))
-                            .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = markerSize.label,
-                            color = CyanPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                } else {
+                    // Alternar Modo
+                    IconButton(onClick = onToggleMode) {
+                        Icon(
+                            imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                                Icons.Default.Gesture
+                            else
+                                Icons.Default.TouchApp,
+                            contentDescription = "Alternar Modo",
+                            tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                                PurpleAccent
+                            else
+                                CyanPrimary
                         )
                     }
-                }
 
-                // Velocidade Global do Fluxo / Arrasto (⚡)
-                IconButton(onClick = onOpenSpeedConfig) {
-                    Icon(
-                        imageVector = Icons.Default.Speed,
-                        contentDescription = "Velocidade Global do Fluxo",
-                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                            PurpleAccent
-                        else
-                            CyanPrimary
-                    )
-                }
+                    // Alternar Loop Fechado
+                    if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
+                        IconButton(onClick = onToggleClosedLoop) {
+                            Icon(
+                                imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
+                                contentDescription = "Loop Fechado ou Aberto",
+                                tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                            )
+                        }
+                    }
 
-                // Visibilidade
-                IconButton(onClick = onToggleVisibility) {
-                    Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
-                }
+                    VerticalDivider(color = Color(0xFF2E3340), modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
 
-                // Salvar
-                IconButton(onClick = onSaveMacro) {
-                    Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
-                }
+                    // Play / Pause
+                    IconButton(onClick = onPlayPause) {
+                        Icon(
+                            imageVector = when (executionState) {
+                                ExecutionState.RUNNING -> Icons.Default.Pause
+                                else -> Icons.Default.PlayArrow
+                            },
+                            contentDescription = "Iniciar ou Pausar",
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                        )
+                    }
 
-                VerticalDivider(color = Color.DarkGray, modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
+                    // Adicionar Alvo
+                    IconButton(onClick = onAddPoint) {
+                        Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
+                    }
 
-                // Fechar
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                    // Remover Alvo
+                    IconButton(onClick = onRemovePoint) {
+                        Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
+                    }
+
+                    // Alternar Tamanho Marcador (P, M, G)
+                    IconButton(onClick = onCycleMarkerSize) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF252A38))
+                                .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = markerSize.label,
+                                color = CyanPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Velocidade Global do Fluxo / Arrasto (⚡)
+                    IconButton(onClick = onOpenSpeedConfig) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = "Velocidade Global do Fluxo",
+                            tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                                PurpleAccent
+                            else
+                                CyanPrimary
+                        )
+                    }
+
+                    // Visibilidade
+                    IconButton(onClick = onToggleVisibility) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
+                    }
+
+                    // Salvar
+                    IconButton(onClick = onSaveMacro) {
+                        Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
+                    }
+
+                    VerticalDivider(color = Color.DarkGray, modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
+
+                    // Fechar
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                    }
                 }
             }
         } else {
             Column(
-                modifier = Modifier.padding(vertical = 8.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
@@ -949,102 +982,125 @@ fun FloatingToolbarComposable(
 
                 Spacer(modifier = Modifier.height(2.dp))
 
-                // Alternar Modo
-                IconButton(onClick = onToggleMode) {
+                // Botão de Expandir / Colapsar
+                IconButton(onClick = onToggleExpand) {
                     Icon(
-                        imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                            Icons.Default.Gesture
-                        else
-                            Icons.Default.TouchApp,
-                        contentDescription = "Alternar Modo",
-                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                            PurpleAccent
-                        else
-                            CyanPrimary
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (isExpanded) "Recolher Menu" else "Expandir Menu",
+                        tint = CyanPrimary
                     )
                 }
 
-                // Alternar Loop Fechado
-                if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
-                    IconButton(onClick = onToggleClosedLoop) {
+                if (!isExpanded) {
+                    // Quando colapsado no modo retrato: apenas Play/Pause rápido
+                    IconButton(onClick = onPlayPause) {
                         Icon(
-                            imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
-                            contentDescription = "Loop Fechado ou Aberto",
-                            tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                            imageVector = when (executionState) {
+                                ExecutionState.RUNNING -> Icons.Default.Pause
+                                else -> Icons.Default.PlayArrow
+                            },
+                            contentDescription = "Iniciar ou Pausar",
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
                         )
                     }
-                }
-
-                HorizontalDivider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
-
-                // Play / Pause
-                IconButton(onClick = onPlayPause) {
-                    Icon(
-                        imageVector = when (executionState) {
-                            ExecutionState.RUNNING -> Icons.Default.Pause
-                            else -> Icons.Default.PlayArrow
-                        },
-                        contentDescription = "Iniciar ou Pausar",
-                        tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
-                    )
-                }
-
-                // Adicionar Alvo
-                IconButton(onClick = onAddPoint) {
-                    Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
-                }
-
-                // Remover Alvo
-                IconButton(onClick = onRemovePoint) {
-                    Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
-                }
-
-                // Alternar Tamanho Marcador (P, M, G)
-                IconButton(onClick = onCycleMarkerSize) {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF252A38))
-                            .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = markerSize.label,
-                            color = CyanPrimary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                } else {
+                    // Alternar Modo
+                    IconButton(onClick = onToggleMode) {
+                        Icon(
+                            imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                                Icons.Default.Gesture
+                            else
+                                Icons.Default.TouchApp,
+                            contentDescription = "Alternar Modo",
+                            tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                                PurpleAccent
+                            else
+                                CyanPrimary
                         )
                     }
-                }
 
-                // Velocidade Global do Fluxo / Arrasto (⚡)
-                IconButton(onClick = onOpenSpeedConfig) {
-                    Icon(
-                        imageVector = Icons.Default.Speed,
-                        contentDescription = "Velocidade Global do Fluxo",
-                        tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
-                            PurpleAccent
-                        else
-                            CyanPrimary
-                    )
-                }
+                    // Alternar Loop Fechado
+                    if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
+                        IconButton(onClick = onToggleClosedLoop) {
+                            Icon(
+                                imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
+                                contentDescription = "Loop Fechado ou Aberto",
+                                tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                            )
+                        }
+                    }
 
-                // Visibilidade
-                IconButton(onClick = onToggleVisibility) {
-                    Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
-                }
+                    HorizontalDivider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
 
-                // Salvar
-                IconButton(onClick = onSaveMacro) {
-                    Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
-                }
+                    // Play / Pause
+                    IconButton(onClick = onPlayPause) {
+                        Icon(
+                            imageVector = when (executionState) {
+                                ExecutionState.RUNNING -> Icons.Default.Pause
+                                else -> Icons.Default.PlayArrow
+                            },
+                            contentDescription = "Iniciar ou Pausar",
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                        )
+                    }
 
-                HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 8.dp))
+                    // Adicionar Alvo
+                    IconButton(onClick = onAddPoint) {
+                        Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
+                    }
 
-                // Fechar
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                    // Remover Alvo
+                    IconButton(onClick = onRemovePoint) {
+                        Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
+                    }
+
+                    // Alternar Tamanho Marcador (P, M, G)
+                    IconButton(onClick = onCycleMarkerSize) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF252A38))
+                                .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = markerSize.label,
+                                color = CyanPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Velocidade Global do Fluxo / Arrasto (⚡)
+                    IconButton(onClick = onOpenSpeedConfig) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = "Velocidade Global do Fluxo",
+                            tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
+                                PurpleAccent
+                            else
+                                CyanPrimary
+                        )
+                    }
+
+                    // Visibilidade
+                    IconButton(onClick = onToggleVisibility) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
+                    }
+
+                    // Salvar
+                    IconButton(onClick = onSaveMacro) {
+                        Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
+                    }
+
+                    HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 8.dp))
+
+                    // Fechar
+                    IconButton(onClick = onClose) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                    }
                 }
             }
         }
