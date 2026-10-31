@@ -6,9 +6,7 @@ import com.hypertap.autoclicker.model.ExecutionState
 import com.hypertap.autoclicker.model.MacroPattern
 import com.hypertap.autoclicker.model.TapAction
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 
 class MacroExecutionEngine(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -22,6 +20,9 @@ class MacroExecutionEngine(
 
     private val _currentCycle = MutableStateFlow(0)
     val currentCycle: StateFlow<Int> = _currentCycle.asStateFlow()
+
+    private val _onActionExecuted = MutableSharedFlow<Pair<Float, Float>>(extraBufferCapacity = 32)
+    val onActionExecuted: SharedFlow<Pair<Float, Float>> = _onActionExecuted.asSharedFlow()
 
     private var executionJob: Job? = null
     private var isPaused = false
@@ -88,6 +89,7 @@ class MacroExecutionEngine(
     private suspend fun executeAction(service: HyperTapAccessibilityService, action: TapAction) {
         when (action) {
             is TapAction.SingleTap -> {
+                _onActionExecuted.tryEmit(Pair(action.point.x, action.point.y))
                 service.click(
                     x = action.point.x,
                     y = action.point.y,
@@ -95,6 +97,7 @@ class MacroExecutionEngine(
                 )
             }
             is TapAction.MultiTap -> {
+                action.points.forEach { _onActionExecuted.tryEmit(Pair(it.x, it.y)) }
                 service.multiClick(
                     points = action.points,
                     pressDurationMs = action.pressDurationMs
