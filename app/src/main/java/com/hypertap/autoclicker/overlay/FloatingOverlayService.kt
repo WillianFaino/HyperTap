@@ -16,12 +16,18 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -220,6 +226,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 params.x = (ratioX * newWidth).toInt().coerceIn(0, (newWidth - toolbarW).coerceAtLeast(0))
                 params.y = (ratioY * newHeight).toInt().coerceIn(0, (newHeight - toolbarH).coerceAtLeast(0))
                 windowManager.updateViewLayout(toolbar, params)
+                adjustToolbarPositionWithinScreen()
             }
 
             // 3. Atualiza o canvas de sobreposição
@@ -231,6 +238,45 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 
         lastScreenWidth = newWidth
         lastScreenHeight = newHeight
+    }
+
+    private fun toggleToolbarExpansion() {
+        val willExpand = !isToolbarExpanded.value
+        isToolbarExpanded.value = willExpand
+        adjustToolbarPositionWithinScreen(willExpand)
+    }
+
+    private fun adjustToolbarPositionWithinScreen(isExpanded: Boolean = isToolbarExpanded.value) {
+        val toolbar = toolbarView ?: return
+        val params = toolbar.layoutParams as? WindowManager.LayoutParams ?: return
+        val screenWidth = resources.displayMetrics.widthPixels
+        val screenHeight = resources.displayMetrics.heightPixels
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val density = resources.displayMetrics.density
+
+        val targetWidthPx = if (isLandscape) {
+            if (isExpanded) (500 * density).toInt() else (90 * density).toInt()
+        } else {
+            (54 * density).toInt()
+        }
+
+        val targetHeightPx = if (isLandscape) {
+            (52 * density).toInt()
+        } else {
+            if (isExpanded) (520 * density).toInt() else (110 * density).toInt()
+        }
+
+        if (params.x + targetWidthPx > screenWidth) {
+            params.x = (screenWidth - targetWidthPx).coerceAtLeast(10)
+        }
+        if (params.y + targetHeightPx > screenHeight) {
+            params.y = (screenHeight - targetHeightPx).coerceAtLeast(10)
+        }
+
+        params.x = params.x.coerceAtLeast(0)
+        params.y = params.y.coerceAtLeast(0)
+
+        windowManager.updateViewLayout(toolbar, params)
     }
 
     private fun triggerRipple(x: Float, y: Float) {
@@ -318,7 +364,9 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
-        )
+        ).apply {
+            alpha = 0.8f // Compatibilidade com Android 12+ Untrusted Touch Blocking
+        }
 
         pathCanvasView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@FloatingOverlayService)
@@ -379,7 +427,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     isLandscape = isLandscape,
                     isExpanded = isExpanded,
                     onToggleExpand = {
-                        isToolbarExpanded.value = !isToolbarExpanded.value
+                        toggleToolbarExpansion()
                     },
                     onToggleMode = {
                         automationMode.value = if (automationMode.value == AutomationMode.SINGLE_OR_MULTI_TAP)
@@ -577,6 +625,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             } else {
                 params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
+            params.alpha = 0.8f
             if (params.flags != newFlags) {
                 params.flags = newFlags
                 windowManager.updateViewLayout(view, params)
@@ -604,6 +653,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             gravity = Gravity.TOP or Gravity.START
             x = target.x.toInt() - (sizePx / 2)
             y = target.y.toInt() - (sizePx / 2)
+            alpha = 0.8f
         }
 
         val targetView = ComposeView(this).apply {
@@ -793,6 +843,24 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 }
 
 @Composable
+private fun ToolbarIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 38.dp,
+    content: @Composable () -> Unit
+) {
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
+    }
+}
+
+@Composable
 fun FloatingToolbarComposable(
     executionState: ExecutionState,
     automationMode: FloatingOverlayService.AutomationMode,
@@ -814,9 +882,14 @@ fun FloatingToolbarComposable(
     onDragToolbar: (Float, Float) -> Unit
 ) {
     Surface(
-        modifier = (if (isLandscape) Modifier.height(if (isExpanded) 52.dp else 48.dp) else Modifier.width(if (isExpanded) 54.dp else 48.dp))
-            .clip(RoundedCornerShape(26.dp))
-            .animateContentSize()
+        modifier = (if (isLandscape) Modifier.height(if (isExpanded) 50.dp else 46.dp) else Modifier.width(if (isExpanded) 52.dp else 46.dp))
+            .clip(RoundedCornerShape(24.dp))
+            .animateContentSize(
+                animationSpec = tween(
+                    durationMillis = 200,
+                    easing = FastOutSlowInEasing
+                )
+            )
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
@@ -829,15 +902,17 @@ fun FloatingToolbarComposable(
     ) {
         if (isLandscape) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                    .horizontalScroll(rememberScrollState()),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 // Indicador de arrasto vertical
                 Box(
                     modifier = Modifier
                         .width(4.dp)
-                        .height(20.dp)
+                        .height(18.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .background(Color.Gray.copy(alpha = 0.5f))
                 )
@@ -845,29 +920,31 @@ fun FloatingToolbarComposable(
                 Spacer(modifier = Modifier.width(2.dp))
 
                 // Botão de Expandir / Colapsar
-                IconButton(onClick = onToggleExpand) {
+                ToolbarIconButton(onClick = onToggleExpand, size = 36.dp) {
                     Icon(
                         imageVector = if (isExpanded) Icons.Default.ChevronLeft else Icons.Default.ChevronRight,
                         contentDescription = if (isExpanded) "Recolher Menu" else "Expandir Menu",
-                        tint = CyanPrimary
+                        tint = CyanPrimary,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
                 if (!isExpanded) {
                     // Quando colapsado no modo paisagem: apenas Play/Pause rápido
-                    IconButton(onClick = onPlayPause) {
+                    ToolbarIconButton(onClick = onPlayPause, size = 36.dp) {
                         Icon(
                             imageVector = when (executionState) {
                                 ExecutionState.RUNNING -> Icons.Default.Pause
                                 else -> Icons.Default.PlayArrow
                             },
                             contentDescription = "Iniciar ou Pausar",
-                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF),
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 } else {
                     // Alternar Modo
-                    IconButton(onClick = onToggleMode) {
+                    ToolbarIconButton(onClick = onToggleMode, size = 36.dp) {
                         Icon(
                             imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
                                 Icons.Default.Gesture
@@ -877,50 +954,53 @@ fun FloatingToolbarComposable(
                             tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
                                 PurpleAccent
                             else
-                                CyanPrimary
+                                CyanPrimary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
                     // Alternar Loop Fechado
                     if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
-                        IconButton(onClick = onToggleClosedLoop) {
+                        ToolbarIconButton(onClick = onToggleClosedLoop, size = 36.dp) {
                             Icon(
                                 imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
                                 contentDescription = "Loop Fechado ou Aberto",
-                                tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                                tint = if (isClosedLoop) CyanPrimary else Color.LightGray,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
 
-                    VerticalDivider(color = Color(0xFF2E3340), modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
+                    VerticalDivider(color = Color(0xFF2E3340), modifier = Modifier.height(20.dp).padding(vertical = 2.dp))
 
                     // Play / Pause
-                    IconButton(onClick = onPlayPause) {
+                    ToolbarIconButton(onClick = onPlayPause, size = 36.dp) {
                         Icon(
                             imageVector = when (executionState) {
                                 ExecutionState.RUNNING -> Icons.Default.Pause
                                 else -> Icons.Default.PlayArrow
                             },
                             contentDescription = "Iniciar ou Pausar",
-                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF),
+                            modifier = Modifier.size(22.dp)
                         )
                     }
 
                     // Adicionar Alvo
-                    IconButton(onClick = onAddPoint) {
-                        Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
+                    ToolbarIconButton(onClick = onAddPoint, size = 36.dp) {
+                        Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
 
                     // Remover Alvo
-                    IconButton(onClick = onRemovePoint) {
-                        Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
+                    ToolbarIconButton(onClick = onRemovePoint, size = 36.dp) {
+                        Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray, modifier = Modifier.size(20.dp))
                     }
 
                     // Alternar Tamanho Marcador (P, M, G)
-                    IconButton(onClick = onCycleMarkerSize) {
+                    ToolbarIconButton(onClick = onCycleMarkerSize, size = 36.dp) {
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
+                                .size(24.dp)
                                 .clip(CircleShape)
                                 .background(Color(0xFF252A38))
                                 .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
@@ -929,52 +1009,55 @@ fun FloatingToolbarComposable(
                             Text(
                                 text = markerSize.label,
                                 color = CyanPrimary,
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
 
                     // Velocidade Global do Fluxo / Arrasto (⚡)
-                    IconButton(onClick = onOpenSpeedConfig) {
+                    ToolbarIconButton(onClick = onOpenSpeedConfig, size = 36.dp) {
                         Icon(
                             imageVector = Icons.Default.Speed,
                             contentDescription = "Velocidade Global do Fluxo",
                             tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
                                 PurpleAccent
                             else
-                                CyanPrimary
+                                CyanPrimary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
                     // Visibilidade
-                    IconButton(onClick = onToggleVisibility) {
-                        Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
+                    ToolbarIconButton(onClick = onToggleVisibility, size = 36.dp) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray, modifier = Modifier.size(20.dp))
                     }
 
                     // Salvar
-                    IconButton(onClick = onSaveMacro) {
-                        Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
+                    ToolbarIconButton(onClick = onSaveMacro, size = 36.dp) {
+                        Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray, modifier = Modifier.size(20.dp))
                     }
 
-                    VerticalDivider(color = Color.DarkGray, modifier = Modifier.height(24.dp).padding(vertical = 2.dp))
+                    VerticalDivider(color = Color.DarkGray, modifier = Modifier.height(20.dp).padding(vertical = 2.dp))
 
                     // Fechar
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                    ToolbarIconButton(onClick = onClose, size = 36.dp) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252), modifier = Modifier.size(20.dp))
                     }
                 }
             }
         } else {
             Column(
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                modifier = Modifier
+                    .padding(horizontal = 4.dp, vertical = 6.dp)
+                    .verticalScroll(rememberScrollState()),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 // Indicador de arrasto horizontal
                 Box(
                     modifier = Modifier
-                        .width(20.dp)
+                        .width(18.dp)
                         .height(4.dp)
                         .clip(RoundedCornerShape(2.dp))
                         .background(Color.Gray.copy(alpha = 0.5f))
@@ -983,29 +1066,31 @@ fun FloatingToolbarComposable(
                 Spacer(modifier = Modifier.height(2.dp))
 
                 // Botão de Expandir / Colapsar
-                IconButton(onClick = onToggleExpand) {
+                ToolbarIconButton(onClick = onToggleExpand, size = 38.dp) {
                     Icon(
                         imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                         contentDescription = if (isExpanded) "Recolher Menu" else "Expandir Menu",
-                        tint = CyanPrimary
+                        tint = CyanPrimary,
+                        modifier = Modifier.size(24.dp)
                     )
                 }
 
                 if (!isExpanded) {
                     // Quando colapsado no modo retrato: apenas Play/Pause rápido
-                    IconButton(onClick = onPlayPause) {
+                    ToolbarIconButton(onClick = onPlayPause, size = 38.dp) {
                         Icon(
                             imageVector = when (executionState) {
                                 ExecutionState.RUNNING -> Icons.Default.Pause
                                 else -> Icons.Default.PlayArrow
                             },
                             contentDescription = "Iniciar ou Pausar",
-                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF),
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 } else {
                     // Alternar Modo
-                    IconButton(onClick = onToggleMode) {
+                    ToolbarIconButton(onClick = onToggleMode, size = 38.dp) {
                         Icon(
                             imageVector = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
                                 Icons.Default.Gesture
@@ -1015,50 +1100,53 @@ fun FloatingToolbarComposable(
                             tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
                                 PurpleAccent
                             else
-                                CyanPrimary
+                                CyanPrimary,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
 
                     // Alternar Loop Fechado
                     if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP) {
-                        IconButton(onClick = onToggleClosedLoop) {
+                        ToolbarIconButton(onClick = onToggleClosedLoop, size = 38.dp) {
                             Icon(
                                 imageVector = if (isClosedLoop) Icons.Default.AllInclusive else Icons.Default.LinearScale,
                                 contentDescription = "Loop Fechado ou Aberto",
-                                tint = if (isClosedLoop) CyanPrimary else Color.LightGray
+                                tint = if (isClosedLoop) CyanPrimary else Color.LightGray,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
 
-                    HorizontalDivider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 8.dp))
+                    HorizontalDivider(color = Color(0xFF2E3340), modifier = Modifier.padding(horizontal = 6.dp))
 
                     // Play / Pause
-                    IconButton(onClick = onPlayPause) {
+                    ToolbarIconButton(onClick = onPlayPause, size = 38.dp) {
                         Icon(
                             imageVector = when (executionState) {
                                 ExecutionState.RUNNING -> Icons.Default.Pause
                                 else -> Icons.Default.PlayArrow
                             },
                             contentDescription = "Iniciar ou Pausar",
-                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF)
+                            tint = if (executionState == ExecutionState.RUNNING) Color(0xFFFFD600) else Color(0xFF00E5FF),
+                            modifier = Modifier.size(24.dp)
                         )
                     }
 
                     // Adicionar Alvo
-                    IconButton(onClick = onAddPoint) {
-                        Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White)
+                    ToolbarIconButton(onClick = onAddPoint, size = 38.dp) {
+                        Icon(Icons.Default.AddLocation, contentDescription = "Adicionar Alvo", tint = Color.White, modifier = Modifier.size(22.dp))
                     }
 
                     // Remover Alvo
-                    IconButton(onClick = onRemovePoint) {
-                        Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray)
+                    ToolbarIconButton(onClick = onRemovePoint, size = 38.dp) {
+                        Icon(Icons.Default.RemoveCircleOutline, contentDescription = "Remover Alvo", tint = Color.LightGray, modifier = Modifier.size(22.dp))
                     }
 
                     // Alternar Tamanho Marcador (P, M, G)
-                    IconButton(onClick = onCycleMarkerSize) {
+                    ToolbarIconButton(onClick = onCycleMarkerSize, size = 38.dp) {
                         Box(
                             modifier = Modifier
-                                .size(28.dp)
+                                .size(26.dp)
                                 .clip(CircleShape)
                                 .background(Color(0xFF252A38))
                                 .border(1.dp, CyanPrimary.copy(alpha = 0.6f), CircleShape),
@@ -1067,39 +1155,40 @@ fun FloatingToolbarComposable(
                             Text(
                                 text = markerSize.label,
                                 color = CyanPrimary,
-                                fontSize = 12.sp,
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
 
                     // Velocidade Global do Fluxo / Arrasto (⚡)
-                    IconButton(onClick = onOpenSpeedConfig) {
+                    ToolbarIconButton(onClick = onOpenSpeedConfig, size = 38.dp) {
                         Icon(
                             imageVector = Icons.Default.Speed,
                             contentDescription = "Velocidade Global do Fluxo",
                             tint = if (automationMode == FloatingOverlayService.AutomationMode.CONTINUOUS_DRAG_LOOP)
                                 PurpleAccent
                             else
-                                CyanPrimary
+                                CyanPrimary,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
 
                     // Visibilidade
-                    IconButton(onClick = onToggleVisibility) {
-                        Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray)
+                    ToolbarIconButton(onClick = onToggleVisibility, size = 38.dp) {
+                        Icon(Icons.Default.Visibility, contentDescription = "Alternar Visibilidade", tint = Color.LightGray, modifier = Modifier.size(22.dp))
                     }
 
                     // Salvar
-                    IconButton(onClick = onSaveMacro) {
-                        Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray)
+                    ToolbarIconButton(onClick = onSaveMacro, size = 38.dp) {
+                        Icon(Icons.Default.Save, contentDescription = "Salvar Padrão", tint = Color.LightGray, modifier = Modifier.size(22.dp))
                     }
 
-                    HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 8.dp))
+                    HorizontalDivider(color = Color.DarkGray, modifier = Modifier.padding(horizontal = 6.dp))
 
                     // Fechar
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252))
+                    ToolbarIconButton(onClick = onClose, size = 38.dp) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar Menu", tint = Color(0xFFFF5252), modifier = Modifier.size(22.dp))
                     }
                 }
             }
