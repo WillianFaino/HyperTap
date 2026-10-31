@@ -7,8 +7,7 @@ param(
 )
 
 $adb = "C:\Users\Pichau\AppData\Local\Android\Sdk\platform-tools\adb.exe"
-$java = "C:\Program Files\Android\Android Studio\jbr\bin\java.exe"
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+$env:JAVA_HOME = "C:\Program Files\Eclipse Adoptium\jdk-21.0.13.9-hotspot"
 $env:PATH = "$env:JAVA_HOME\bin;$env:LOCALAPPDATA\Android\Sdk\platform-tools;" + $env:PATH
 
 Write-Host "==========================================" -ForegroundColor Cyan
@@ -65,6 +64,6 @@ Write-Host "`n[3/4] Instalando APK no $model..." -ForegroundColor Yellow
 & $adb install -r -d -g $apkPath
 
 Write-Host "`n[4/4] Iniciando HyperTap na tela..." -ForegroundColor Yellow
-& $adb shell am start -n com.hypertap.autoclicker/.MainActivity
+& $adb shell am start -n com.hypertap.autoclicker.debug/com.hypertap.autoclicker.MainActivity
 
 Write-Host "`n[OK] HyperTap instalado e executando com sucesso no seu POCO X8 Pro!" -ForegroundColor Green

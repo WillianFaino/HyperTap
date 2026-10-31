@@ -112,7 +112,7 @@ class MacroExecutionEngine(
             is TapAction.ContinuousLoop -> {
                 val loops = if (action.loopCount <= 0) 1 else action.loopCount
                 for (l in 0 until loops) {
-                    if (isPaused || !coroutineContext.isActive) break
+                    if (isPaused || _executionState.value != ExecutionState.RUNNING) break
                     service.continuousDrag(
                         waypoints = action.waypoints,
                         stepDurationMs = action.stepDurationMs,
