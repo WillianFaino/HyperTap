@@ -3,8 +3,10 @@ package com.hypertap.autoclicker.overlay
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
@@ -15,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.hypertap.autoclicker.ui.theme.*
@@ -49,6 +52,7 @@ fun TargetConfigDialog(
             modifier = Modifier
                 .padding(20.dp)
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
         ) {
             // Cabeçalho com badge do ponto
             Row(
@@ -88,7 +92,7 @@ fun TargetConfigDialog(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             HorizontalDivider(color = Color(0xFF2A2E3D))
             Spacer(modifier = Modifier.height(14.dp))
 
@@ -99,7 +103,7 @@ fun TargetConfigDialog(
                 color = CyanPrimary,
                 fontWeight = FontWeight.SemiBold
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -113,39 +117,27 @@ fun TargetConfigDialog(
                     color = Color.White
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TargetStepperButton(
+                        text = "-100",
                         onClick = { delayMs = (delayMs - 100).coerceAtLeast(10L) },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("-100", fontSize = 11.sp, color = Color.White)
-                    }
-                    Button(
+                        isNegative = true
+                    )
+                    TargetStepperButton(
+                        text = "-50",
                         onClick = { delayMs = (delayMs - 50).coerceAtLeast(10L) },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("-50", fontSize = 11.sp, color = Color.White)
-                    }
-                    Button(
+                        isNegative = true
+                    )
+                    TargetStepperButton(
+                        text = "+50",
                         onClick = { delayMs += 50 },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("+50", fontSize = 11.sp, color = CyanPrimary)
-                    }
-                    Button(
+                        isNegative = false
+                    )
+                    TargetStepperButton(
+                        text = "+100",
                         onClick = { delayMs += 100 },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("+100", fontSize = 11.sp, color = CyanPrimary)
-                    }
+                        isNegative = false
+                    )
                 }
             }
 
@@ -171,7 +163,9 @@ fun TargetConfigDialog(
                             fontSize = 11.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             color = if (isSelected) CyanPrimary else TextSecondary,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -186,7 +180,7 @@ fun TargetConfigDialog(
                 color = CyanPrimary,
                 fontWeight = FontWeight.SemiBold
             )
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -200,39 +194,27 @@ fun TargetConfigDialog(
                     color = Color.White
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Button(
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TargetStepperButton(
+                        text = "-50",
                         onClick = { pressDurationMs = (pressDurationMs - 50).coerceAtLeast(10L) },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("-50", fontSize = 11.sp, color = Color.White)
-                    }
-                    Button(
+                        isNegative = true
+                    )
+                    TargetStepperButton(
+                        text = "-10",
                         onClick = { pressDurationMs = (pressDurationMs - 10).coerceAtLeast(10L) },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("-10", fontSize = 11.sp, color = Color.White)
-                    }
-                    Button(
+                        isNegative = true
+                    )
+                    TargetStepperButton(
+                        text = "+10",
                         onClick = { pressDurationMs = (pressDurationMs + 10).coerceAtMost(5000L) },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("+10", fontSize = 11.sp, color = CyanPrimary)
-                    }
-                    Button(
+                        isNegative = false
+                    )
+                    TargetStepperButton(
+                        text = "+50",
                         onClick = { pressDurationMs = (pressDurationMs + 50).coerceAtMost(5000L) },
-                        colors = ButtonDefaults.buttonColors(containerColor = DarkCard),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("+50", fontSize = 11.sp, color = CyanPrimary)
-                    }
+                        isNegative = false
+                    )
                 }
             }
 
@@ -258,7 +240,9 @@ fun TargetConfigDialog(
                             fontSize = 11.sp,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                             color = if (isSelected) CyanPrimary else TextSecondary,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            softWrap = false
                         )
                     }
                 }
@@ -277,12 +261,13 @@ fun TargetConfigDialog(
                     onClick = onDelete,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusDanger),
                     border = androidx.compose.foundation.BorderStroke(1.dp, StatusDanger.copy(alpha = 0.6f))
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Excluir", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Excluir", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
 
                 Button(
@@ -292,13 +277,44 @@ fun TargetConfigDialog(
                     },
                     modifier = Modifier.weight(1.3f),
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = CyanPrimary, contentColor = Color.Black)
                 ) {
                     Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Concluir", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text("Salvar", fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TargetStepperButton(
+    text: String,
+    onClick: () -> Unit,
+    isNegative: Boolean
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = Color(0xFF222630),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E3340)),
+        modifier = Modifier.width(44.dp)
+    ) {
+        Box(
+            modifier = Modifier.padding(vertical = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = text,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isNegative) Color.White else CyanPrimary,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }

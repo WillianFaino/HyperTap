@@ -29,8 +29,13 @@ fun ContinuousPathOverlayCanvas(
     waypoints: List<FloatingOverlayService.InteractiveTarget>,
     isClosedLoop: Boolean,
     activeRipples: List<TouchRippleEffect>,
+    stepDurationMs: Long = 250L,
     modifier: Modifier = Modifier
 ) {
+    val totalSegments = if (isClosedLoop) waypoints.size else (waypoints.size - 1).coerceAtLeast(1)
+    val totalGestureDurationMs = (totalSegments * stepDurationMs).toInt().coerceIn(300, 10000)
+    val flowCycleMs = (stepDurationMs * 3L).toInt().coerceIn(300, 3000)
+
     // Animação de fluxo do traçado (efeito neon fluido contínuo)
     val infiniteTransition = rememberInfiniteTransition(label = "path_animations")
 
@@ -38,18 +43,18 @@ fun ContinuousPathOverlayCanvas(
         initialValue = 0f,
         targetValue = 40f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = LinearEasing),
+            animation = tween(flowCycleMs, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "flow_phase"
     )
 
-    // Partícula viajante que percorre o traçado demonstrando o gesto
+    // Partícula viajante que percorre o traçado demonstrando o gesto na velocidade real
     val particleProgress by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = LinearEasing),
+            animation = tween(totalGestureDurationMs, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "traveling_particle"
