@@ -58,9 +58,9 @@ class HyperTapAccessibilityService : AccessibilityService() {
         return suspendCancellableCoroutine { continuation ->
             val path = Path().apply {
                 moveTo(x, y)
-                lineTo(x, y) // Necessário no Android para registrar o segmento de contato do toque
+                lineTo(x, y + 1f) // Micro-delta de 1 pixel essencial para criar vetor com comprimento > 0 no MotionEventInjector
             }
-            val stroke = GestureDescription.StrokeDescription(path, 0L, pressDurationMs.coerceAtLeast(10L))
+            val stroke = GestureDescription.StrokeDescription(path, 0L, pressDurationMs.coerceAtLeast(40L))
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
             val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
@@ -89,12 +89,12 @@ class HyperTapAccessibilityService : AccessibilityService() {
         if (points.isEmpty()) return true
         return suspendCancellableCoroutine { continuation ->
             val builder = GestureDescription.Builder()
-            val duration = pressDurationMs.coerceAtLeast(10L)
+            val duration = pressDurationMs.coerceAtLeast(40L)
 
             points.take(10).forEach { point ->
                 val path = Path().apply {
                     moveTo(point.x, point.y)
-                    lineTo(point.x, point.y)
+                    lineTo(point.x, point.y + 1f)
                 }
                 builder.addStroke(GestureDescription.StrokeDescription(path, 0L, duration))
             }
@@ -157,7 +157,7 @@ class HyperTapAccessibilityService : AccessibilityService() {
 
     /**
      * Despacha um arrasto contínuo em loop através de múltiplos pontos
-     * sem retirar o dedo da tela (usando willContinue = true).
+     * sem retirar o dedo da tela utilizando um Path contínuo unificado.
      */
     suspend fun continuousDrag(
         waypoints: List<Point2D>,
@@ -174,43 +174,23 @@ class HyperTapAccessibilityService : AccessibilityService() {
         }
 
         val stepDuration = stepDurationMs.coerceAtLeast(50L)
+        val totalDuration = ((points.size - 1) * stepDuration).coerceAtLeast(100L)
 
-        // Primeiro traço
-        val firstSegment = Path().apply {
+        // Trajeto contínuo unificado passando por todos os waypoints sequencialmente
+        val continuousPath = Path().apply {
             moveTo(points[0].x, points[0].y)
-            lineTo(points[1].x, points[1].y)
-        }
-
-        var currentStroke = GestureDescription.StrokeDescription(
-            firstSegment,
-            0L,
-            stepDuration,
-            points.size > 2 // Continua se houver mais pontos
-        )
-
-        val strokes = mutableListOf(currentStroke)
-
-        for (i in 2 until points.size) {
-            val segmentPath = Path().apply {
-                moveTo(points[i - 1].x, points[i - 1].y)
+            for (i in 1 until points.size) {
                 lineTo(points[i].x, points[i].y)
             }
-            val willContinue = (i < points.size - 1)
-            currentStroke = currentStroke.continueStroke(segmentPath, 0L, stepDuration, willContinue)
-            strokes.add(currentStroke)
         }
 
-        // Despacha os traços de forma encadeada
-        return suspendCancellableCoroutine { continuation ->
-            val builder = GestureDescription.Builder()
-            // Android permite despachar a cadeia de strokes
-            strokes.forEach { stroke ->
-                builder.addStroke(stroke)
-            }
+        val stroke = GestureDescription.StrokeDescription(continuousPath, 0L, totalDuration)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
-            val dispatched = dispatchGesture(builder.build(), object : GestureResultCallback() {
+        return suspendCancellableCoroutine { continuation ->
+            val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    Log.i(TAG, "Arrasto contínuo concluído (${strokes.size} segmentos)")
+                    Log.i(TAG, "Arrasto contínuo concluído com sucesso (${points.size} pontos, ${totalDuration}ms)")
                     if (continuation.isActive) continuation.resume(true)
                 }
 

@@ -42,6 +42,9 @@ class MacroExecutionEngine(
 
         executionJob = scope.launch {
             try {
+                // Breve pausa para propagação assíncrona do WindowManager (FLAG_NOT_TOUCHABLE e alpha)
+                delay(100L)
+
                 val infinite = macro.repeatCount <= 0
                 var cycle = 0
 
