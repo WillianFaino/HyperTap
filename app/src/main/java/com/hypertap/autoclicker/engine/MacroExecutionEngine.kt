@@ -70,7 +70,8 @@ class MacroExecutionEngine(
                             delay(action.delayBeforeMs)
                         }
 
-                        executeAction(service, action)
+                        val activeService = HyperTapAccessibilityService.instance ?: service
+                        executeAction(activeService, action)
                     }
 
                     // Intervalo entre repetições
