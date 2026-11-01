@@ -52,9 +52,16 @@ Log-Step "1. Validando conexao e pre-condicoes do dispositivo"
 $device = & $adb devices | Select-String "device\b" | Where-Object { $_ -notmatch "List of" }
 Assert-Result "Dispositivo POCO X8 Pro conectado" ($null -ne $device) "ID: $($device.ToString().Trim())"
 
+# Injeta automaticamente todas as permissões necessárias
+& "$PSScriptRoot\grant-all-permissions.ps1"
+
 # Garante tela ligada e desbloqueada
+& $adb shell svc power stayon usb
 & $adb shell input keyevent 224 # WAKEUP
 & $adb shell wm dismiss-keyguard 2>$null
+
+# Fecha qualquer serviço prévio para início limpo
+& $adb shell am stopservice com.hypertap.autoclicker.debug/com.hypertap.autoclicker.overlay.FloatingOverlayService 2>$null | Out-Null
 
 # Trava modo retrato para início limpo
 & $adb shell settings put system accelerometer_rotation 0
