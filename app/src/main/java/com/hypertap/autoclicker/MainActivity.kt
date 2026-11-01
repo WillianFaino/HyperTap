@@ -52,7 +52,8 @@ class MainActivity : ComponentActivity() {
                     repository = repository,
                     onRequestOverlayPermission = { requestOverlayPermission() },
                     onRequestAccessibilityPermission = { requestAccessibilityPermission() },
-                    onStartFloatingMenu = { startFloatingMenu() }
+                    onStartFloatingMenu = { startFloatingMenu() },
+                    onStopFloatingMenu = { stopFloatingMenu() }
                 )
             }
         }
@@ -95,6 +96,11 @@ class MainActivity : ComponentActivity() {
         FloatingOverlayService.start(this)
         Toast.makeText(this, "Menu flutuante iniciado!", Toast.LENGTH_SHORT).show()
     }
+
+    private fun stopFloatingMenu() {
+        FloatingOverlayService.stop(this)
+        Toast.makeText(this, "Menu flutuante encerrado!", Toast.LENGTH_SHORT).show()
+    }
 }
 
 @Composable
@@ -102,12 +108,14 @@ fun MainAppScreen(
     repository: com.hypertap.autoclicker.data.repository.MacroRepository,
     onRequestOverlayPermission: () -> Unit,
     onRequestAccessibilityPermission: () -> Unit,
-    onStartFloatingMenu: () -> Unit
+    onStartFloatingMenu: () -> Unit,
+    onStopFloatingMenu: () -> Unit
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val savedMacros by repository.allMacros.collectAsState(initial = emptyList())
     val isA11yActive by HyperTapAccessibilityService.isServiceActive.collectAsState()
+    val isOverlayRunning by FloatingOverlayService.isServiceRunning.collectAsState()
 
     var hasOverlayPermission by remember {
         mutableStateOf(
@@ -216,21 +224,31 @@ fun MainAppScreen(
             // Botão Principal de Início
             item {
                 Button(
-                    onClick = onStartFloatingMenu,
+                    onClick = {
+                        if (isOverlayRunning) {
+                            onStopFloatingMenu()
+                        } else {
+                            onStartFloatingMenu()
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(58.dp),
                     shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = CyanPrimary,
-                        contentColor = Color.Black
+                        containerColor = if (isOverlayRunning) Color(0xFFFF5252) else CyanPrimary,
+                        contentColor = if (isOverlayRunning) Color.White else Color.Black
                     ),
                     elevation = ButtonDefaults.buttonElevation(defaultElevation = 6.dp)
                 ) {
-                    Icon(Icons.Default.PlayCircle, contentDescription = null, modifier = Modifier.size(26.dp))
+                    Icon(
+                        imageVector = if (isOverlayRunning) Icons.Default.StopCircle else Icons.Default.PlayCircle,
+                        contentDescription = null,
+                        modifier = Modifier.size(26.dp)
+                    )
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "INICIAR MENU FLUTUANTE",
+                        text = if (isOverlayRunning) "PARAR MENU FLUTUANTE" else "INICIAR MENU FLUTUANTE",
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
                     )

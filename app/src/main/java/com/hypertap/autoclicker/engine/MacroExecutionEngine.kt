@@ -42,8 +42,9 @@ class MacroExecutionEngine(
 
         executionJob = scope.launch {
             try {
-                // Breve pausa para propagação assíncrona do WindowManager (FLAG_NOT_TOUCHABLE e alpha)
-                delay(100L)
+                // Pausa inicial para garantir que o WindowManager e o InputDispatcher
+                // apliquem a flag FLAG_NOT_TOUCHABLE e evitem self-tap nos marcadores
+                delay(150L)
 
                 val infinite = macro.repeatCount <= 0
                 var cycle = 0
@@ -69,6 +70,8 @@ class MacroExecutionEngine(
                         if (action.delayBeforeMs > 0) {
                             delay(action.delayBeforeMs)
                         }
+
+                        if (!isActive) break
 
                         val activeService = HyperTapAccessibilityService.instance ?: service
                         executeAction(activeService, action)

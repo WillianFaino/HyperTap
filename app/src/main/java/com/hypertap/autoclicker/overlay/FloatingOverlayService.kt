@@ -11,6 +11,7 @@ import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -77,6 +78,12 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         const val CHANNEL_ID = "hypertap_overlay_channel"
         const val NOTIFICATION_ID = 1001
 
+        private val _isServiceRunning = MutableStateFlow(false)
+        val isServiceRunning: StateFlow<Boolean> = _isServiceRunning.asStateFlow()
+
+        private var _instance: FloatingOverlayService? = null
+        val instance: FloatingOverlayService? get() = _instance
+
         fun start(context: Context) {
             val intent = Intent(context, FloatingOverlayService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -87,8 +94,10 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, FloatingOverlayService::class.java)
-            context.stopService(intent)
+            _instance?.closeService() ?: run {
+                val intent = Intent(context, FloatingOverlayService::class.java)
+                context.stopService(intent)
+            }
         }
     }
 
@@ -168,6 +177,8 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 
     override fun onCreate() {
         super.onCreate()
+        _instance = this
+        _isServiceRunning.value = true
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
@@ -487,7 +498,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                         saveCurrentMacro()
                     },
                     onClose = {
-                        stopSelf()
+                        closeService()
                     },
                     onDragToolbar = { deltaX, deltaY ->
                         val screenWidth = resources.displayMetrics.widthPixels
@@ -539,8 +550,22 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     }
 
     private fun updateTargetsVisibility() {
-        val visibility = if (isTargetsVisible.value) View.VISIBLE else View.GONE
-        activeTargetViews.values.forEach { it.visibility = visibility }
+        val visible = isTargetsVisible.value
+        val visibility = if (visible) View.VISIBLE else View.GONE
+        activeTargetViews.values.forEach { view ->
+            view.visibility = visibility
+            val params = view.layoutParams as? WindowManager.LayoutParams ?: return@forEach
+            val isRunning = executionEngine.executionState.value == ExecutionState.RUNNING
+            val targetFlags = if (!visible || isRunning) {
+                params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            } else {
+                params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            if (params.flags != targetFlags) {
+                params.flags = targetFlags
+                runCatching { windowManager.updateViewLayout(view, params) }
+            }
+        }
     }
 
     private fun showTargetConfigDialog(target: InteractiveTarget) {
@@ -646,7 +671,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 
     private fun dismissConfigDialog() {
         currentConfigDialogView?.let { view ->
-            windowManager.removeView(view)
+            runCatching { overlayWindowManager.removeView(view) }
             currentConfigDialogView = null
         }
     }
@@ -654,14 +679,21 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     private fun updateTargetsTouchPassThrough(isExecuting: Boolean) {
         activeTargetViews.values.forEach { view ->
             val params = view.layoutParams as? WindowManager.LayoutParams ?: return@forEach
-            val newFlags = if (isExecuting) {
+            val targetFlags = if (isExecuting) {
                 params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             } else {
                 params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
-            if (params.flags != newFlags) {
-                params.flags = newFlags
-                windowManager.updateViewLayout(view, params)
+            val targetAlpha = if (isExecuting) 0.45f else 0.95f
+
+            view.isEnabled = !isExecuting
+            view.isClickable = !isExecuting
+            view.isFocusable = !isExecuting
+
+            if (params.flags != targetFlags || params.alpha != targetAlpha) {
+                params.flags = targetFlags
+                params.alpha = targetAlpha
+                runCatching { windowManager.updateViewLayout(view, params) }
             }
         }
     }
@@ -727,6 +759,11 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                 private var hasMoved = false
 
                 override fun onTouch(v: View, event: MotionEvent): Boolean {
+                    // Quando a macro estiver em execução, NUNCA consuma eventos de toque nos alvos
+                    if (executionEngine.executionState.value == ExecutionState.RUNNING) {
+                        return false
+                    }
+
                     when (event.action) {
                         MotionEvent.ACTION_DOWN -> {
                             initialX = params.x
@@ -838,12 +875,18 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         when (executionEngine.executionState.value) {
             ExecutionState.IDLE -> {
                 val pattern = createCurrentMacroPattern() ?: return
+                // Seta FLAG_NOT_TOUCHABLE e alpha translúcido nos marcadores SINCRONAMENTE antes de iniciar o clique
+                updateTargetsTouchPassThrough(isExecuting = true)
                 executionEngine.start(pattern)
             }
-            ExecutionState.RUNNING -> executionEngine.pause()
+            ExecutionState.RUNNING -> {
+                executionEngine.pause()
+                updateTargetsTouchPassThrough(isExecuting = false)
+            }
             ExecutionState.PAUSED -> {
-                // Ao despausar, atualiza o padrão com as coordenadas vigentes de todos os alvos
+                // Ao despausar, atualiza coordenadas e retoma com alvos pass-through
                 val pattern = createCurrentMacroPattern() ?: return
+                updateTargetsTouchPassThrough(isExecuting = true)
                 executionEngine.stop()
                 executionEngine.start(pattern)
             }
@@ -857,20 +900,52 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
+    fun closeService() {
+        if (!_isServiceRunning.value && _instance == null) return
+        Log.i("FloatingOverlay", "Finalizando FloatingOverlayService e parando automações.")
+        _isServiceRunning.value = false
+        _instance = null
+
+        // 1. Interrompe IMEDIATAMENTE a execução de cliques do motor
         executionEngine.stop()
+
+        // 2. Cancela o escopo de corrotinas do serviço
         serviceScope.cancel()
 
+        // 3. Fecha diálogos pendentes
         dismissConfigDialog()
-        pathCanvasView?.let { windowManager.removeView(it) }
-        toolbarView?.let { windowManager.removeView(it) }
-        activeTargetViews.values.forEach { windowManager.removeView(it) }
-        activeTargetViews.clear()
 
+        // 4. Remove overlays do WindowManager
+        pathCanvasView?.let { runCatching { overlayWindowManager.removeView(it) } }
+        pathCanvasView = null
+
+        toolbarView?.let { runCatching { overlayWindowManager.removeView(it) } }
+        toolbarView = null
+
+        activeTargetViews.values.forEach { view ->
+            runCatching { overlayWindowManager.removeView(view) }
+        }
+        activeTargetViews.clear()
+        targetPoints.clear()
+
+        // 5. Encerra notificação e estado foreground
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+
+        // 6. Solicita parada do serviço
+        stopSelf()
+    }
+
+    override fun onDestroy() {
+        closeService()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
