@@ -11,6 +11,7 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import com.hypertap.autoclicker.model.Point2D
+import com.hypertap.autoclicker.overlay.FloatingOverlayService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,6 +52,7 @@ class HyperTapAccessibilityService : AccessibilityService() {
         Log.w(TAG, "HyperTap Accessibility Service desconectado (onUnbind).")
         _instance = null
         _isServiceActive.value = false
+        FloatingOverlayService.instance?.closeService()
         return super.onUnbind(intent)
     }
 
@@ -58,6 +60,7 @@ class HyperTapAccessibilityService : AccessibilityService() {
         super.onDestroy()
         _instance = null
         _isServiceActive.value = false
+        FloatingOverlayService.instance?.closeService()
         Log.i(TAG, "HyperTap Accessibility Service destruído.")
     }
 
