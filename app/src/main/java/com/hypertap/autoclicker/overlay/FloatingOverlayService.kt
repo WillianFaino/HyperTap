@@ -268,15 +268,15 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         val density = resources.displayMetrics.density
 
         val targetWidthPx = if (isLandscape) {
-            if (isExpanded) (500 * density).toInt() else (90 * density).toInt()
+            if (isExpanded) (470 * density).toInt() else (90 * density).toInt()
         } else {
             (54 * density).toInt()
         }
 
         val targetHeightPx = if (isLandscape) {
-            (52 * density).toInt()
+            (50 * density).toInt()
         } else {
-            if (isExpanded) (520 * density).toInt() else (110 * density).toInt()
+            if (isExpanded) (520 * density).toInt() else (100 * density).toInt()
         }
 
         if (params.x + targetWidthPx > screenWidth) {
@@ -288,6 +288,8 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 
         params.x = params.x.coerceAtLeast(0)
         params.y = params.y.coerceAtLeast(0)
+        params.width = targetWidthPx
+        params.height = targetHeightPx
 
         windowManager.updateViewLayout(toolbar, params)
     }
@@ -403,9 +405,10 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     }
 
     private fun initFloatingToolbar() {
+        val density = resources.displayMetrics.density
         val layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+            (54 * density).toInt(),
+            (520 * density).toInt(),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             else
@@ -895,14 +898,9 @@ fun FloatingToolbarComposable(
     onDragToolbar: (Float, Float) -> Unit
 ) {
     Surface(
-        modifier = (if (isLandscape) Modifier.height(if (isExpanded) 50.dp else 46.dp) else Modifier.width(if (isExpanded) 52.dp else 46.dp))
+        modifier = Modifier
+            .fillMaxSize()
             .clip(RoundedCornerShape(24.dp))
-            .animateContentSize(
-                animationSpec = tween(
-                    durationMillis = 200,
-                    easing = FastOutSlowInEasing
-                )
-            )
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()

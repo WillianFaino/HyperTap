@@ -71,16 +71,16 @@ Start-Sleep -Milliseconds 800
 # 2. Tela Principal do HyperTap
 Log-Step "2. Inicializacao e Status de Permissoes na Tela Principal"
 & $adb shell am start -n com.hypertap.autoclicker.debug/com.hypertap.autoclicker.MainActivity | Out-Null
-Start-Sleep -Milliseconds 1200
+Start-Sleep -Milliseconds 1500
 
 $mainShot = Take-Screenshot "01_main_activity_portrait.png"
 Assert-Result "Screenshot da Tela Principal capturado" (Test-Path $mainShot) "Salvo em: $mainShot"
 
 # 3. Inicia Menu Flutuante
 Log-Step "3. Acionamento do Menu Flutuante"
-# Toca no botão 'INICIAR MENU FLUTUANTE' (x=634, y=1800)
-& $adb shell input tap 634 1800
-Start-Sleep -Milliseconds 1500
+# Toca no botão 'INICIAR MENU FLUTUANTE' (x=634, y=1803)
+& $adb shell input tap 634 1803
+Start-Sleep -Milliseconds 1800
 
 $toolbarShot = Take-Screenshot "02_toolbar_expanded_portrait.png"
 $activeServices = (& $adb shell dumpsys activity services com.hypertap.autoclicker.debug) -join "`n"
@@ -173,14 +173,14 @@ Assert-Result "Barra flutuante adaptada em Modo Paisagem com largura total" (Tes
 
 # 9. Teste de Colapso e Expansão no Modo Paisagem
 Log-Step "9. Teste de Colapso e Expansao no Modo Paisagem"
-# Toca no botão de recolher da barra em paisagem (x=80, y=230)
-& $adb shell input tap 80 230
+# Toca no botão de recolher da barra em paisagem (x=130, y=195)
+& $adb shell input tap 130 195
 Start-Sleep -Milliseconds 700
 $landCollapsedShot = Take-Screenshot "11_landscape_collapsed_toolbar.png"
 Assert-Result "Barra recolhida com sucesso em Paisagem" (Test-Path $landCollapsedShot)
 
 # Toca para re-expandir
-& $adb shell input tap 80 230
+& $adb shell input tap 130 195
 Start-Sleep -Milliseconds 700
 $landReExpandedShot = Take-Screenshot "12_landscape_reexpanded_toolbar.png"
 Assert-Result "Barra re-expandida com sucesso em Paisagem" (Test-Path $landReExpandedShot)
