@@ -55,6 +55,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.hypertap.autoclicker.MainActivity
 import com.hypertap.autoclicker.R
+import com.hypertap.autoclicker.accessibility.HyperTapAccessibilityService
 import com.hypertap.autoclicker.data.local.HyperTapDatabase
 import com.hypertap.autoclicker.data.repository.MacroRepository
 import com.hypertap.autoclicker.engine.MacroExecutionEngine
@@ -92,7 +93,25 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private lateinit var windowManager: WindowManager
+
+    private val overlayWindowManager: WindowManager
+        get() = HyperTapAccessibilityService.instance?.let { a11y ->
+            a11y.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+        } ?: (this@FloatingOverlayService.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+
+    private val overlayWindowType: Int
+        get() = if (HyperTapAccessibilityService.instance != null) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
+        }
+
+    private val windowManager: WindowManager
+        get() = overlayWindowManager
+
     private lateinit var macroRepository: MacroRepository
     private val executionEngine = MacroExecutionEngine()
 
@@ -154,7 +173,6 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         lastScreenWidth = resources.displayMetrics.widthPixels
         lastScreenHeight = resources.displayMetrics.heightPixels
         val database = HyperTapDatabase.getDatabase(this)
@@ -370,18 +388,13 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         val layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE,
+            overlayWindowType,
             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
-        ).apply {
-            alpha = 0.8f // Compatibilidade com Android 12+ Untrusted Touch Blocking
-        }
+        )
 
         pathCanvasView = ComposeView(this).apply {
             setViewTreeLifecycleOwner(this@FloatingOverlayService)
@@ -409,12 +422,9 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         val layoutParams = WindowManager.LayoutParams(
             (54 * density).toInt(),
             (520 * density).toInt(),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE,
+            overlayWindowType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
@@ -541,11 +551,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         val dialogParams = WindowManager.LayoutParams(
             dialogWidthPx,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE,
+            overlayWindowType,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
@@ -566,6 +572,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     onSave = { newDelay, newDuration ->
                         target.delayMs = newDelay
                         target.pressDurationMs = newDuration
+                        dismissConfigDialog()
                     },
                     onDelete = {
                         deleteTarget(target)
@@ -576,6 +583,13 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                     }
                 )
             }
+        }
+
+        dialogView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                dismissConfigDialog()
+                true
+            } else false
         }
 
         currentConfigDialogView = dialogView
@@ -590,11 +604,7 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         val dialogParams = WindowManager.LayoutParams(
             dialogWidthPx,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE,
+            overlayWindowType,
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
             PixelFormat.TRANSLUCENT
@@ -614,12 +624,20 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                         if (applyToAll) {
                             targetPoints.forEach { it.delayMs = newSpeed }
                         }
+                        dismissConfigDialog()
                     },
                     onDismiss = {
                         dismissConfigDialog()
                     }
                 )
             }
+        }
+
+        dialogView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_OUTSIDE) {
+                dismissConfigDialog()
+                true
+            } else false
         }
 
         currentConfigDialogView = dialogView
@@ -641,7 +659,6 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             } else {
                 params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
             }
-            params.alpha = 0.8f
             if (params.flags != newFlags) {
                 params.flags = newFlags
                 windowManager.updateViewLayout(view, params)
@@ -656,12 +673,9 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
         val params = WindowManager.LayoutParams(
             sizePx,
             sizePx,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE,
+            overlayWindowType,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                     (if (isRunning) WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else 0),
             PixelFormat.TRANSLUCENT
@@ -669,7 +683,6 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
             gravity = Gravity.TOP or Gravity.START
             x = target.x.toInt() - (sizePx / 2)
             y = target.y.toInt() - (sizePx / 2)
-            alpha = 0.8f
         }
 
         val targetView = ComposeView(this).apply {
@@ -734,14 +747,16 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
                             params.y = initialY + dy
                             windowManager.updateViewLayout(v, params)
 
-                            // Atualiza a coordenada central do alvo
-                            target.x = params.x + (sizePx / 2f)
-                            target.y = params.y + (sizePx / 2f)
+                            // Atualiza a coordenada central do alvo a partir da tela
+                            val loc = IntArray(2)
+                            v.getLocationOnScreen(loc)
+                            target.x = loc[0] + (v.width / 2f)
+                            target.y = loc[1] + (v.height / 2f)
                             return true
                         }
                         MotionEvent.ACTION_UP -> {
                             val duration = System.currentTimeMillis() - touchDownTime
-                            if (!hasMoved && duration < 350) {
+                            if (!hasMoved && duration < 350 && executionEngine.executionState.value == ExecutionState.IDLE) {
                                 // Toque rápido: abre o diálogo de configuração individual
                                 showTargetConfigDialog(target)
                             }
@@ -755,86 +770,89 @@ class FloatingOverlayService : Service(), LifecycleOwner, SavedStateRegistryOwne
 
         activeTargetViews[target.id] = targetView
         windowManager.addView(targetView, params)
+        targetView.post {
+            if (targetView.isAttachedToWindow) {
+                val loc = IntArray(2)
+                targetView.getLocationOnScreen(loc)
+                target.x = loc[0] + (targetView.width / 2f)
+                target.y = loc[1] + (targetView.height / 2f)
+            }
+        }
+    }
+
+    private fun createCurrentMacroPattern(): MacroPattern? {
+        if (targetPoints.isEmpty()) return null
+        return if (automationMode.value == AutomationMode.CONTINUOUS_DRAG_LOOP) {
+            if (targetPoints.size < 2) return null
+            val waypoints = targetPoints.map { target ->
+                val view = activeTargetViews[target.id]
+                if (view != null && view.isAttachedToWindow) {
+                    val loc = IntArray(2)
+                    view.getLocationOnScreen(loc)
+                    Point2D(loc[0] + (view.width / 2f), loc[1] + (view.height / 2f))
+                } else {
+                    Point2D(target.x, target.y)
+                }
+            }
+            MacroPattern(
+                name = "Arrasto Continuo #${System.currentTimeMillis() % 1000}",
+                repeatCount = 0,
+                actions = listOf(
+                    TapAction.ContinuousLoop(
+                        id = UUID.randomUUID().toString(),
+                        waypoints = waypoints,
+                        stepDurationMs = globalDragStepDurationMs.value,
+                        loopCount = 1,
+                        isClosedLoop = isClosedLoop.value,
+                        delayBeforeMs = 100L
+                    )
+                )
+            )
+        } else {
+            val actions = targetPoints.map { target ->
+                val view = activeTargetViews[target.id]
+                val point = if (view != null && view.isAttachedToWindow) {
+                    val loc = IntArray(2)
+                    view.getLocationOnScreen(loc)
+                    Point2D(loc[0] + (view.width / 2f), loc[1] + (view.height / 2f))
+                } else {
+                    Point2D(target.x, target.y)
+                }
+                TapAction.SingleTap(
+                    id = target.id,
+                    point = point,
+                    pressDurationMs = target.pressDurationMs,
+                    delayBeforeMs = target.delayMs
+                )
+            }
+            MacroPattern(
+                name = "Sequencia de Cliques #${System.currentTimeMillis() % 1000}",
+                repeatCount = 0,
+                actions = actions
+            )
+        }
     }
 
     private fun togglePlayPause() {
+        dismissConfigDialog()
         when (executionEngine.executionState.value) {
             ExecutionState.IDLE -> {
-                if (targetPoints.isEmpty()) return
-
-                val pattern = if (automationMode.value == AutomationMode.CONTINUOUS_DRAG_LOOP) {
-                    if (targetPoints.size < 2) return
-                    val waypoints = targetPoints.map { Point2D(it.x, it.y) }
-                    MacroPattern(
-                        name = "Arrasto Contínuo #${System.currentTimeMillis() % 1000}",
-                        repeatCount = 0,
-                        actions = listOf(
-                            TapAction.ContinuousLoop(
-                                id = UUID.randomUUID().toString(),
-                                waypoints = waypoints,
-                                stepDurationMs = globalDragStepDurationMs.value,
-                                loopCount = 1,
-                                isClosedLoop = isClosedLoop.value,
-                                delayBeforeMs = 100L
-                            )
-                        )
-                    )
-                } else {
-                    val actions = targetPoints.map { target ->
-                        TapAction.SingleTap(
-                            id = target.id,
-                            point = Point2D(target.x, target.y),
-                            pressDurationMs = target.pressDurationMs,
-                            delayBeforeMs = target.delayMs
-                        )
-                    }
-                    MacroPattern(
-                        name = "Sequência de Cliques #${System.currentTimeMillis() % 1000}",
-                        repeatCount = 0,
-                        actions = actions
-                    )
-                }
+                val pattern = createCurrentMacroPattern() ?: return
                 executionEngine.start(pattern)
             }
             ExecutionState.RUNNING -> executionEngine.pause()
-            ExecutionState.PAUSED -> executionEngine.resume()
+            ExecutionState.PAUSED -> {
+                // Ao despausar, atualiza o padrão com as coordenadas vigentes de todos os alvos
+                val pattern = createCurrentMacroPattern() ?: return
+                executionEngine.stop()
+                executionEngine.start(pattern)
+            }
         }
     }
 
     private fun saveCurrentMacro() {
-        if (targetPoints.isEmpty()) return
+        val pattern = createCurrentMacroPattern() ?: return
         serviceScope.launch {
-            val pattern = if (automationMode.value == AutomationMode.CONTINUOUS_DRAG_LOOP) {
-                val waypoints = targetPoints.map { Point2D(it.x, it.y) }
-                MacroPattern(
-                    name = "Macro Arrasto Contínuo #${System.currentTimeMillis() % 1000}",
-                    repeatCount = 0,
-                    actions = listOf(
-                        TapAction.ContinuousLoop(
-                            id = UUID.randomUUID().toString(),
-                            waypoints = waypoints,
-                            stepDurationMs = globalDragStepDurationMs.value,
-                            loopCount = 1,
-                            isClosedLoop = isClosedLoop.value,
-                            delayBeforeMs = 100L
-                        )
-                    )
-                )
-            } else {
-                val actions = targetPoints.map { target ->
-                    TapAction.SingleTap(
-                        id = target.id,
-                        point = Point2D(target.x, target.y),
-                        pressDurationMs = target.pressDurationMs,
-                        delayBeforeMs = target.delayMs
-                    )
-                }
-                MacroPattern(
-                    name = "Macro Cliques #${System.currentTimeMillis() % 1000}",
-                    repeatCount = 0,
-                    actions = actions
-                )
-            }
             macroRepository.saveMacro(pattern)
         }
     }

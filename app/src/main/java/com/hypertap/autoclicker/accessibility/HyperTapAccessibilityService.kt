@@ -2,10 +2,13 @@ package com.hypertap.autoclicker.accessibility
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Path
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import com.hypertap.autoclicker.model.Point2D
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +47,13 @@ class HyperTapAccessibilityService : AccessibilityService() {
         Log.w(TAG, "HyperTap Accessibility Service interrompido.")
     }
 
+    override fun onUnbind(intent: Intent?): Boolean {
+        Log.w(TAG, "HyperTap Accessibility Service desconectado (onUnbind).")
+        _instance = null
+        _isServiceActive.value = false
+        return super.onUnbind(intent)
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         _instance = null
@@ -58,10 +68,14 @@ class HyperTapAccessibilityService : AccessibilityService() {
         return suspendCancellableCoroutine { continuation ->
             val path = Path().apply {
                 moveTo(x, y)
-                lineTo(x, y + 1f) // Micro-delta de 1 pixel essencial para criar vetor com comprimento > 0 no MotionEventInjector
+                lineTo(x, y + 0.1f) // Subpixel delta de 0.1px para garantir contorno não-vazio exigido pelo StrokeDescription sem causar arrasto
             }
-            val stroke = GestureDescription.StrokeDescription(path, 0L, pressDurationMs.coerceAtLeast(40L))
-            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            val stroke = GestureDescription.StrokeDescription(path, 0L, pressDurationMs.coerceIn(30L, 200L))
+            val gestureBuilder = GestureDescription.Builder().addStroke(stroke)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                gestureBuilder.setDisplayId(Display.DEFAULT_DISPLAY)
+            }
+            val gesture = gestureBuilder.build()
 
             val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
@@ -76,7 +90,7 @@ class HyperTapAccessibilityService : AccessibilityService() {
             }, mainHandler)
 
             if (!dispatched) {
-                Log.e(TAG, "dispatchGesture retornou false ao enfileirar para ($x, $y)")
+                Log.e(TAG, "dispatchGesture retornou false ao enfileirar para ($x, $y). Service ativo: ${_isServiceActive.value}, instance != null: ${_instance != null}")
                 if (continuation.isActive) continuation.resume(false)
             }
         }
@@ -89,14 +103,17 @@ class HyperTapAccessibilityService : AccessibilityService() {
         if (points.isEmpty()) return true
         return suspendCancellableCoroutine { continuation ->
             val builder = GestureDescription.Builder()
-            val duration = pressDurationMs.coerceAtLeast(40L)
+            val duration = pressDurationMs.coerceIn(30L, 200L)
 
             points.take(10).forEach { point ->
                 val path = Path().apply {
                     moveTo(point.x, point.y)
-                    lineTo(point.x, point.y + 1f)
+                    lineTo(point.x, point.y + 0.1f)
                 }
                 builder.addStroke(GestureDescription.StrokeDescription(path, 0L, duration))
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                builder.setDisplayId(Display.DEFAULT_DISPLAY)
             }
 
             val dispatched = dispatchGesture(builder.build(), object : GestureResultCallback() {
@@ -134,7 +151,11 @@ class HyperTapAccessibilityService : AccessibilityService() {
                 lineTo(endX, endY)
             }
             val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs.coerceAtLeast(50L))
-            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            val gestureBuilder = GestureDescription.Builder().addStroke(stroke)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                gestureBuilder.setDisplayId(Display.DEFAULT_DISPLAY)
+            }
+            val gesture = gestureBuilder.build()
 
             val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
@@ -185,7 +206,11 @@ class HyperTapAccessibilityService : AccessibilityService() {
         }
 
         val stroke = GestureDescription.StrokeDescription(continuousPath, 0L, totalDuration)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+        val gestureBuilder = GestureDescription.Builder().addStroke(stroke)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            gestureBuilder.setDisplayId(Display.DEFAULT_DISPLAY)
+        }
+        val gesture = gestureBuilder.build()
 
         return suspendCancellableCoroutine { continuation ->
             val dispatched = dispatchGesture(gesture, object : GestureResultCallback() {
@@ -207,4 +232,3 @@ class HyperTapAccessibilityService : AccessibilityService() {
         }
     }
 }
-
